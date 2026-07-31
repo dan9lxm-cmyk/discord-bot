@@ -1,5 +1,4 @@
-﻿import os
-import discord
+﻿import discord
 from discord.ext import commands
 from discord.ui import Button, View, Select
 import asyncio
@@ -7,6 +6,11 @@ import random
 import logging
 import sys
 import traceback
+import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 # Настройка логирования ошибок
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +40,7 @@ class ErrorHandler(commands.Cog):
         
         await ctx.send(f"❌ Произошла ошибка. Администраторы уведомлены.")
         
-        log_channel = self.bot.get_channel(1531831553162874961)
+        log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             try:
                 embed = discord.Embed(
@@ -54,7 +58,7 @@ class ErrorHandler(commands.Cog):
         error_msg = f"Ошибка в событии {event}:\n{traceback.format_exc()}"
         logging.error(error_msg)
         
-        log_channel = self.bot.get_channel(1531831553162874961)
+        log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             try:
                 embed = discord.Embed(
@@ -100,9 +104,10 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Добавляем обработчик ошибок
 bot.add_cog(ErrorHandler(bot))
 
-# ID канала для приветствия (ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ!)
-WELCOME_CHANNEL_ID = 1532715863717707848
-ROLE_CHANGE_CHANNEL_ID = 1532778968841851022
+# ID каналов из переменных окружения или значения по умолчанию
+WELCOME_CHANNEL_ID = int(os.environ.get('WELCOME_CHANNEL_ID', 1532715863717707848))
+ROLE_CHANGE_CHANNEL_ID = int(os.environ.get('ROLE_CHANGE_CHANNEL_ID', 1532778968841851022))
+LOG_CHANNEL_ID = int(os.environ.get('LOG_CHANNEL_ID', 1531831553162874961))
 
 # НАЗВАНИЕ РОЛИ ДЛЯ НОВИЧКОВ (можно изменить)
 NEWBIE_ROLE_NAME = "Новичок"
@@ -162,12 +167,6 @@ GAME_COLORS = [
 ]
 
 # ==================== ФУНКЦИИ РАБОТЫ С РОЛЯМИ ====================
-# (тут идёт весь ваш код с функциями, классами, командами и событиями)
-
-# ==================== ЗАПУСК ====================
-# (в самом конце)
-
-# ==================== ФУНКЦИИ РАБОТЫ С РОЛЯМИ ====================
 
 async def find_or_create_role(guild, role_name, color):
     """Находит существующую роль или создаёт новую"""
@@ -222,7 +221,6 @@ async def remove_newbie_role(member):
 async def assign_main_role(member):
     """Выдаёт основную роль после регистрации. Ищет по разным вариациям названия."""
     try:
-        # Все возможные вариации названия роли
         role_variations = [
             "Китайский младший",
             "китайский младший",
@@ -238,7 +236,6 @@ async def assign_main_role(member):
             "china"
         ]
         
-        # Ищем роль по всем вариациям
         found_role = None
         for variation in role_variations:
             role = discord.utils.get(member.guild.roles, name=variation)
@@ -247,11 +244,9 @@ async def assign_main_role(member):
                 print(f"🔍 Найдена роль: {role.name} (по запросу: {variation})")
                 break
         
-        # Если роль не найдена - создаём
         if not found_role:
             print(f"🔧 Роль '{MAIN_ROLE_NAME}' не найдена, создаю...")
             
-            # Создаём роль с базовыми правами
             permissions = discord.Permissions(
                 read_messages=True,
                 send_messages=True,
@@ -274,7 +269,6 @@ async def assign_main_role(member):
             )
             print(f"✅ Создана основная роль: {found_role.name} с правами на просмотр")
         
-        # Выдаём роль
         if found_role and found_role not in member.roles:
             await member.add_roles(found_role)
             print(f"✅ Выдана основная роль: {found_role.name} -> {member.name}")
@@ -291,7 +285,6 @@ async def assign_main_role(member):
 async def assign_main_role_for_guild(guild):
     """Создаёт основную роль на сервере при запуске"""
     try:
-        # Все возможные вариации названия роли
         role_variations = [
             "Китайский младший",
             "китайский младший",
@@ -307,7 +300,6 @@ async def assign_main_role_for_guild(guild):
             "china"
         ]
         
-        # Ищем роль по всем вариациям
         found_role = None
         for variation in role_variations:
             role = discord.utils.get(guild.roles, name=variation)
@@ -464,6 +456,62 @@ async def assign_game_roles(member, games):
     return assigned
 
 
+# ==================== ФУНКЦИИ ЛОГИРОВАНИЯ ====================
+
+async def send_registration_log(member):
+    """Уведомление о регистрации в лог-канал"""
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel:
+        embed = discord.Embed(
+            title="✅ Новая регистрация",
+            description=f"{member.mention} прошёл полную регистрацию!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="👤 Пользователь", value=member.name, inline=True)
+        embed.add_field(name="🆔 ID", value=member.id, inline=True)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        await channel.send(embed=embed)
+
+
+async def send_role_change_log(member, changes):
+    """Уведомление об изменении ролей в лог-канал"""
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel and changes:
+        embed = discord.Embed(
+            title="🔄 Изменение ролей",
+            description=f"{member.mention} изменил свои роли",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="📋 Изменения", value='\n'.join(changes), inline=False)
+        embed.set_footer(text=f"ID: {member.id}")
+        await channel.send(embed=embed)
+
+
+async def update_roles_only(interaction: discord.Interaction, user_data):
+    """Только обновляет роли, без уведомлений о регистрации"""
+    member = user_data['member']
+    changes = []
+    
+    if user_data.get('gender'):
+        await assign_gender_role(member, user_data['gender'])
+        gender_display = "👨 Мужчина" if user_data['gender'] == 'male' else "👩 Женщина"
+        changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
+    
+    if user_data.get('age'):
+        await assign_age_role(member, user_data['age'])
+        changes.append(f"{EMOJIS['age']} Возраст: {user_data['age']}")
+    
+    if user_data.get('games'):
+        await assign_game_roles(member, user_data['games'])
+        changes.append(f"{EMOJIS['games']} Игры: {', '.join(user_data['games'])}")
+    
+    # Уведомление пользователю
+    await interaction.user.send("✅ Ваши роли успешно обновлены!")
+    
+    # Лог в канал
+    await send_role_change_log(member, changes)
+
+
 # ==================== КЛАССЫ ИНТЕРФЕЙСА ====================
 
 class ApplyView(View):
@@ -475,9 +523,8 @@ class ApplyView(View):
         await interaction.response.defer()
         try:
             member = await interaction.guild.fetch_member(interaction.user.id)
-            user_data = {'member': member, 'guild': interaction.guild}
+            user_data = {'member': member, 'guild': interaction.guild, 'from_registration': True}
             
-            # Проверяем, есть ли уже роль новичка
             newbie_role = discord.utils.get(member.guild.roles, name=NEWBIE_ROLE_NAME)
             if newbie_role not in member.roles:
                 await interaction.followup.send("❌ У вас нет роли новичка! Обратитесь к администратору.", ephemeral=True)
@@ -497,7 +544,7 @@ class ApplyView(View):
             )
             gender_embed.set_footer(text="Нажмите на одну из кнопок ниже")
             
-            view = GenderView(user_data)
+            view = GenderView(user_data, from_registration=True)
             await interaction.user.send(embed=welcome_embed)
             await interaction.user.send(embed=gender_embed, view=view)
             await interaction.followup.send(f"{EMOJIS['rocket']} Проверь личные сообщения!", ephemeral=True)
@@ -510,16 +557,17 @@ class ApplyView(View):
 
 
 class GenderView(View):
-    def __init__(self, user_data):
+    def __init__(self, user_data, from_registration=True):
         super().__init__(timeout=300)
         self.user_data = user_data
+        self.from_registration = from_registration
         
     @discord.ui.button(label='Я мужчина', style=discord.ButtonStyle.primary, emoji='👨')
     async def male_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
         self.user_data['gender'] = 'male'
         await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина**", ephemeral=True)
-        await show_age_selection(interaction, self.user_data)
+        await show_age_selection(interaction, self.user_data, self.from_registration)
         self.stop()
         
     @discord.ui.button(label='Я женщина', style=discord.ButtonStyle.primary, emoji='👩')
@@ -527,14 +575,15 @@ class GenderView(View):
         await interaction.response.defer()
         self.user_data['gender'] = 'female'
         await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина**", ephemeral=True)
-        await show_age_selection(interaction, self.user_data)
+        await show_age_selection(interaction, self.user_data, self.from_registration)
         self.stop()
 
 
 class AgeView(View):
-    def __init__(self, user_data):
+    def __init__(self, user_data, from_registration=True):
         super().__init__(timeout=300)
         self.user_data = user_data
+        self.from_registration = from_registration
         
         ages = [
             ('🍼 Меньше 16 лет', '🍼'),
@@ -559,14 +608,15 @@ class AgeView(View):
             clean_age = age.replace('🍼 ', '').replace('🌱 ', '').replace('🌿 ', '').replace('🌳 ', '').replace('🍂 ', '')
             self.user_data['age'] = clean_age
             await interaction.followup.send(f"{EMOJIS['age']} Принято! Ваш возраст: **{clean_age}**", ephemeral=True)
-            await show_games_selection(interaction, self.user_data)
+            await show_games_selection(interaction, self.user_data, self.from_registration)
             self.stop()
         return callback
 
 
 class GamesSelect(Select):
-    def __init__(self, user_data):
+    def __init__(self, user_data, from_registration=True):
         self.user_data = user_data
+        self.from_registration = from_registration
         
         options = [
             discord.SelectOption(label='Dota 2', emoji='⚔️', value='Dota 2'),
@@ -593,17 +643,21 @@ class GamesSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
         self.user_data['games'] = self.values
-        games_list = '\n'.join([f'• {game}' for game in self.values])
-        await interaction.followup.send(f"{EMOJIS['games']} Вы выбрали игры:\n{games_list}", ephemeral=True)
-        await complete_registration(interaction, self.user_data)
+        
+        if self.from_registration:
+            await complete_registration(interaction, self.user_data)
+        else:
+            await update_roles_only(interaction, self.user_data)
+        
         self.view.stop()
 
 
 class GamesView(View):
-    def __init__(self, user_data):
+    def __init__(self, user_data, from_registration=True):
         super().__init__(timeout=300)
         self.user_data = user_data
-        self.add_item(GamesSelect(user_data))
+        self.from_registration = from_registration
+        self.add_item(GamesSelect(user_data, from_registration))
 
 
 class ChangeGamesView(View):
@@ -615,7 +669,7 @@ class ChangeGamesView(View):
         await interaction.response.defer()
         try:
             member = await interaction.guild.fetch_member(interaction.user.id)
-            user_data = {'member': member, 'guild': interaction.guild}
+            user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
             embed = discord.Embed(
                 title=f"{EMOJIS['games']} Выберите ваши любимые игры",
@@ -624,7 +678,7 @@ class ChangeGamesView(View):
             )
             embed.set_footer(text="Старые игровые роли будут заменены")
             
-            view = GamesView(user_data)
+            view = GamesView(user_data, from_registration=False)
             await interaction.user.send(embed=embed, view=view)
             await interaction.followup.send(f"{EMOJIS['rocket']} Проверь личные сообщения!", ephemeral=True)
             
@@ -636,7 +690,6 @@ class ChangeGamesView(View):
         await interaction.response.defer()
         member = await interaction.guild.fetch_member(interaction.user.id)
         
-        # Проверяем, есть ли уже гендерная роль
         has_gender = False
         for role in member.roles:
             if role.name.lower() in ['мужчина', 'женщина', 'м', 'ж', 'male', 'female', 'man', 'woman', 'парень', 'девушка', 'тянка', 'тян']:
@@ -648,7 +701,7 @@ class ChangeGamesView(View):
             return
         
         try:
-            user_data = {'member': member, 'guild': interaction.guild}
+            user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
             embed = discord.Embed(
                 title=f"{EMOJIS['gender']} Выберите свой пол",
@@ -657,7 +710,7 @@ class ChangeGamesView(View):
             )
             embed.set_footer(text="Пол можно указать только один раз")
             
-            view = GenderView(user_data)
+            view = GenderView(user_data, from_registration=False)
             await interaction.user.send(embed=embed, view=view)
             await interaction.followup.send(f"{EMOJIS['rocket']} Проверь личные сообщения!", ephemeral=True)
             
@@ -669,7 +722,6 @@ class ChangeGamesView(View):
         await interaction.response.defer()
         member = await interaction.guild.fetch_member(interaction.user.id)
         
-        # Проверяем, есть ли уже возрастная роль
         has_age = False
         for age_key in AGE_COLORS.keys():
             if discord.utils.get(member.roles, name=age_key):
@@ -681,7 +733,7 @@ class ChangeGamesView(View):
             return
         
         try:
-            user_data = {'member': member, 'guild': interaction.guild}
+            user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
             embed = discord.Embed(
                 title=f"{EMOJIS['age']} Выберите ваш возраст",
@@ -690,7 +742,7 @@ class ChangeGamesView(View):
             )
             embed.set_footer(text="Возраст можно указать только один раз")
             
-            view = AgeView(user_data)
+            view = AgeView(user_data, from_registration=False)
             await interaction.user.send(embed=embed, view=view)
             await interaction.followup.send(f"{EMOJIS['rocket']} Проверь личные сообщения!", ephemeral=True)
             
@@ -700,7 +752,7 @@ class ChangeGamesView(View):
 
 # ==================== ФУНКЦИИ ПОКАЗА ВОПРОСОВ ====================
 
-async def show_age_selection(interaction: discord.Interaction, user_data):
+async def show_age_selection(interaction: discord.Interaction, user_data, from_registration=True):
     embed = discord.Embed(
         title=f"{EMOJIS['age']} Вопрос 2 из 3: Выберите ваш возраст",
         description=f"{EMOJIS['star']} К какой возрастной категории вы относитесь?",
@@ -708,11 +760,11 @@ async def show_age_selection(interaction: discord.Interaction, user_data):
     )
     embed.set_footer(text="Выберите один из вариантов ниже")
     
-    view = AgeView(user_data)
+    view = AgeView(user_data, from_registration)
     await interaction.user.send(embed=embed, view=view)
 
 
-async def show_games_selection(interaction: discord.Interaction, user_data):
+async def show_games_selection(interaction: discord.Interaction, user_data, from_registration=True):
     embed = discord.Embed(
         title=f"{EMOJIS['games']} Вопрос 3 из 3: Выберите ваши любимые игры",
         description=f"{EMOJIS['sparkles']} Во что вы любите играть?\nВы можете выбрать несколько вариантов!",
@@ -720,7 +772,7 @@ async def show_games_selection(interaction: discord.Interaction, user_data):
     )
     embed.set_footer(text="Выберите одну или несколько игр из списка")
     
-    view = GamesView(user_data)
+    view = GamesView(user_data, from_registration)
     await interaction.user.send(embed=embed, view=view)
 
 
@@ -729,6 +781,7 @@ async def show_games_selection(interaction: discord.Interaction, user_data):
 async def complete_registration(interaction: discord.Interaction, user_data):
     """Финализирует регистрацию и выдаёт роли"""
     member = user_data['member']
+    from_registration = user_data.get('from_registration', True)
     
     complete_embed = discord.Embed(
         title=f"{EMOJIS['complete']} Регистрация завершена!",
@@ -772,51 +825,43 @@ async def complete_registration(interaction: discord.Interaction, user_data):
     if user_data.get('games'):
         game_roles = await assign_game_roles(member, user_data['games'])
     
-    # Удаляем роль новичка
     await remove_newbie_role(member)
-    
-    # Выдаём основную роль
     await assign_main_role(member)
     
     await asyncio.sleep(1)
     
-    final_embed = discord.Embed(
-        title=f"{EMOJIS['crown']} Добро пожаловать в семью!",
-        description=f"{EMOJIS['rainbow']} {member.mention}, теперь ты полноценный участник сервера!\n\n"
-                   f"{EMOJIS['heart']} Вот твои роли:",
-        color=discord.Color.gold()
-    )
-    
-    roles_list = []
-    if gender_role:
-        roles_list.append(f"{EMOJIS['gender']} {gender_role.mention}")
-    if age_role:
-        roles_list.append(f"{EMOJIS['age']} {age_role.mention}")
-    if game_roles:
-        game_mentions = ' '.join([r.mention for r in game_roles])
-        roles_list.append(f"{EMOJIS['games']} {game_mentions}")
-    
-    if roles_list:
-        final_embed.add_field(name="📋 Назначенные роли", value='\n'.join(roles_list), inline=False)
-    else:
-        final_embed.add_field(name="📋 Назначенные роли", value="❌ Роли не были назначены", inline=False)
-    
-    final_embed.add_field(name=f"{EMOJIS['fire']} Начни общение!", 
-                         value="Заходи в голосовые каналы и текстовые чаты!\nРасскажи о себе в общем чате.",
-                         inline=False)
-    final_embed.set_footer(text=f"{EMOJIS['confetti']} Мы рады, что ты с нами!")
-    
-    await interaction.user.send(embed=final_embed)
-    
-    # Уведомление в канал логов
-    channel = bot.get_channel(1531831553162874961)
-    if channel:
-        welcome_embed = discord.Embed(
-            description=f"{EMOJIS['party']} {member.mention} только что прошёл регистрацию!\n"
-                    f"{EMOJIS['sparkles']} Поприветствуем нового участника!",
-            color=discord.Color.green()
+    # Только если это полная регистрация (не смена ролей)
+    if from_registration:
+        final_embed = discord.Embed(
+            title=f"{EMOJIS['crown']} Добро пожаловать в семью!",
+            description=f"{EMOJIS['rainbow']} {member.mention}, теперь ты полноценный участник сервера!\n\n"
+                       f"{EMOJIS['heart']} Вот твои роли:",
+            color=discord.Color.gold()
         )
-        await channel.send(embed=welcome_embed)
+        
+        roles_list = []
+        if gender_role:
+            roles_list.append(f"{EMOJIS['gender']} {gender_role.mention}")
+        if age_role:
+            roles_list.append(f"{EMOJIS['age']} {age_role.mention}")
+        if game_roles:
+            game_mentions = ' '.join([r.mention for r in game_roles])
+            roles_list.append(f"{EMOJIS['games']} {game_mentions}")
+        
+        if roles_list:
+            final_embed.add_field(name="📋 Назначенные роли", value='\n'.join(roles_list), inline=False)
+        else:
+            final_embed.add_field(name="📋 Назначенные роли", value="❌ Роли не были назначены", inline=False)
+        
+        final_embed.add_field(name=f"{EMOJIS['fire']} Начни общение!", 
+                             value="Заходи в голосовые каналы и текстовые чаты!\nРасскажи о себе в общем чате.",
+                             inline=False)
+        final_embed.set_footer(text=f"{EMOJIS['confetti']} Мы рады, что ты с нами!")
+        
+        await interaction.user.send(embed=final_embed)
+        
+        # Отправляем уведомление о регистрации
+        await send_registration_log(member)
 
 
 # ==================== СОБЫТИЯ БОТА ====================
@@ -834,14 +879,34 @@ async def on_ready():
         status=discord.Status.online
     )
     
+    # Проверка ID каналов
+    print(f"✅ WELCOME_CHANNEL_ID: {WELCOME_CHANNEL_ID}")
+    print(f"✅ ROLE_CHANGE_CHANNEL_ID: {ROLE_CHANGE_CHANNEL_ID}")
+    print(f"✅ LOG_CHANNEL_ID: {LOG_CHANNEL_ID}")
+    
+    welcome_ch = bot.get_channel(WELCOME_CHANNEL_ID)
+    role_ch = bot.get_channel(ROLE_CHANGE_CHANNEL_ID)
+    log_ch = bot.get_channel(LOG_CHANNEL_ID)
+    
+    if welcome_ch:
+        print(f"✅ Приветственный канал: #{welcome_ch.name}")
+    else:
+        print(f"❌ Приветственный канал НЕ НАЙДЕН!")
+    
+    if role_ch:
+        print(f"✅ Канал смены ролей: #{role_ch.name}")
+    else:
+        print(f"❌ Канал смены ролей НЕ НАЙДЕН!")
+    
+    if log_ch:
+        print(f"✅ Лог-канал: #{log_ch.name}")
+    else:
+        print(f"❌ Лог-канал НЕ НАЙДЕН!")
+    
     for guild in bot.guilds:
-        # Создаём роль новичка
         await find_or_create_role(guild, NEWBIE_ROLE_NAME, discord.Color.light_gray())
-        
-        # Создаём основную роль
         await assign_main_role_for_guild(guild)
         
-        # ===== ПРИВЕТСТВЕННЫЙ КАНАЛ =====
         channel = bot.get_channel(WELCOME_CHANNEL_ID)
         if channel:
             try:
@@ -870,7 +935,6 @@ async def on_ready():
             view = ApplyView()
             await channel.send(embed=embed, view=view)
     
-    # ===== КАНАЛ ДЛЯ СМЕНЫ РОЛЕЙ =====
     role_channel = bot.get_channel(ROLE_CHANGE_CHANNEL_ID)
     if role_channel:
         try:
@@ -902,12 +966,10 @@ async def on_ready():
 @bot.event
 async def on_member_join(member):
     """При входе участника выдаём роль новичка"""
-    # Проверяем, есть ли уже роли (кроме @everyone)
     if len(member.roles) > 1:
         print(f"ℹ️ {member.name} уже имеет роли, пропускаем")
         return
     
-    # Выдаём роль новичка
     await assign_newbie_role(member)
     print(f"📥 {member.name} получил роль {NEWBIE_ROLE_NAME}")
 
@@ -989,7 +1051,7 @@ async def setup_role_channel(ctx):
 async def test_registration(ctx):
     try:
         member = await ctx.guild.fetch_member(ctx.author.id)
-        user_data = {'member': member, 'guild': ctx.guild}
+        user_data = {'member': member, 'guild': ctx.guild, 'from_registration': True}
         
         welcome_embed = discord.Embed(
             title=f"{EMOJIS['welcome']} Тестовая регистрация",
@@ -1004,7 +1066,7 @@ async def test_registration(ctx):
         )
         gender_embed.set_footer(text="Нажмите на одну из кнопок ниже")
         
-        view = GenderView(user_data)
+        view = GenderView(user_data, from_registration=True)
         await ctx.author.send(embed=welcome_embed)
         await ctx.author.send(embed=gender_embed, view=view)
         await ctx.send(f"{EMOJIS['rocket']} Проверь личные сообщения!")
@@ -1033,6 +1095,11 @@ async def clear_all(ctx):
 
 # ==================== ЗАПУСК ====================
 
+
+
 if __name__ == "__main__":
-    TOKEN = os.getenv('DISCORD_TOKEN')  # ЗАМЕНИТЕ НА ТОКЕН БОТА
+    TOKEN = os.environ.get('DISCORD_TOKEN')
+    if not TOKEN:
+        print("❌ Токен не найден! Создайте файл .env с DISCORD_TOKEN=ваш_токен")
+        sys.exit(1)
     bot.run(TOKEN)
