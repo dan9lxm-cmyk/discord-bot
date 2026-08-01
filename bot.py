@@ -865,10 +865,10 @@ async def update_roles_only(interaction: discord.Interaction, user_data):
 
 
 
-
 # ==================== ОПРОСЫ И ГОЛОСОВАНИЯ ====================
 
 import asyncio
+import re
 from discord.ui import Button, View, Modal, TextInput
 import discord
 
@@ -876,10 +876,12 @@ import discord
 active_poll = None
 
 class CreatePollModal(discord.ui.Modal):
-    def __init__(self, creator_id, ctx):
+    def __init__(self, creator_id, ctx, original_message=None, command_message=None):
         super().__init__(title="📊 Создание опроса")
         self.creator_id = creator_id
         self.ctx = ctx
+        self.original_message = original_message
+        self.command_message = command_message
         
         self.question1 = discord.ui.TextInput(
             label="Шаг 1: Название опроса",
@@ -890,17 +892,17 @@ class CreatePollModal(discord.ui.Modal):
         )
         self.add_item(self.question1)
         
-        self.time1 = discord.ui.TextInput(
-            label="Шаг 2: Время для первого опроса (минуты)",
-            placeholder="Например: 5",
+        self.time_reminder1 = discord.ui.TextInput(
+            label="Шаг 2: Время/Напоминание для опроса",
+            placeholder="Время (минуты) / Напоминание (часы). Пример: 60 / 1",
             style=discord.TextStyle.short,
             required=True,
-            max_length=10
+            max_length=20
         )
-        self.add_item(self.time1)
+        self.add_item(self.time_reminder1)
         
         self.question2 = discord.ui.TextInput(
-            label="Шаг 3: Название второго опроса (голосование)",
+            label="Шаг 3: Название голосования",
             placeholder="Введите название для голосования...",
             style=discord.TextStyle.short,
             required=True,
@@ -908,176 +910,328 @@ class CreatePollModal(discord.ui.Modal):
         )
         self.add_item(self.question2)
         
-        self.time2 = discord.ui.TextInput(
-            label="Шаг 4: Время для голосования (минуты)",
-            placeholder="Например: 5",
+        self.time_reminder2 = discord.ui.TextInput(
+            label="Шаг 4: Время/Напоминание для голосования",
+            placeholder="Время (минуты) / Напоминание (часы). Пример: 60 / 1",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.time_reminder2)
+        
+        self.enable_pin_function = discord.ui.TextInput(
+            label="Шаг 5: Включить вар-ты (да/нет)",
+            placeholder="Введите 'да' или 'нет'",
             style=discord.TextStyle.short,
             required=True,
             max_length=10
         )
-        self.add_item(self.time2)
+        self.add_item(self.enable_pin_function)
     
     async def on_submit(self, interaction: discord.Interaction):
         global active_poll
         
-        # Проверяем, что это тот же пользователь
-        if interaction.user.id != self.creator_id:
-            await interaction.response.send_message("❌ Вы не создавали этот опрос!", ephemeral=True)
-            return
-        
-        # Получаем данные
-        question1 = self.question1.value
         try:
-            time1 = int(self.time1.value)
-        except ValueError:
-            await interaction.response.send_message("❌ Введите корректное число для времени!", ephemeral=True)
-            return
-        
-        question2 = self.question2.value
-        try:
-            time2 = int(self.time2.value)
-        except ValueError:
-            await interaction.response.send_message("❌ Введите корректное число для времени!", ephemeral=True)
-            return
-        
-        if time1 <= 0 or time2 <= 0:
-            await interaction.response.send_message("❌ Время должно быть больше 0!", ephemeral=True)
-            return
-        
-        # Устанавливаем флаг активного опроса
-        active_poll = True
-        
-        await interaction.response.send_message(
-            f"✅ **Опрос создается!**\n\n"
-            f"**Первый опрос:** {question1}\n"
-            f"**Время:** {time1} минут\n\n"
-            f"**Второй опрос (голосование):** {question2}\n"
-            f"**Время:** {time2} минут",
-            ephemeral=True
-        )
-        
-        # Создаем первый опрос
-        poll_view = PollView(question1, time1, interaction, self.creator_id, self.ctx)
-        
-        embed = discord.Embed(
-            title=f"📊 Опрос: {question1}",
-            description="Нажмите кнопку ниже, чтобы оставить свой ответ!",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"Опрос активен {time1} минут | Создатель может завершить досрочно")
-        
-        message = await interaction.channel.send(embed=embed, view=poll_view)
-        poll_view.message = message
-        
-        # Закрепляем сообщение с опросом
-        try:
-            await message.pin()
-        except discord.Forbidden:
-            pass  # Если нет прав на закрепление
-        
-        # Ждем указанное время или досрочного завершения
-        start_time = asyncio.get_event_loop().time()
-        while poll_view.is_active:
-            await asyncio.sleep(5)
-            if asyncio.get_event_loop().time() - start_time >= time1 * 60:
-                break
-        
-        # Завершаем опрос и получаем ответы
-        responses = await poll_view.finish_poll()
-        
-        # Открепляем сообщение с опросом
-        try:
-            await message.unpin()
-        except discord.Forbidden:
-            pass
-        
-        if not responses:
-            await interaction.channel.send("❌ Нет ответов для создания голосования.")
-            active_poll = False
-            return
-        
-        # Создаем голосование
-        await interaction.channel.send(
-            f"🗳️ **Голосование создано!**\n\n"
-            f"На основе {len(responses)} ответов создано голосование.\n"
-            f"Вопрос: **{question2}**\n"
-            f"Время голосования: **{time2}** минут."
-        )
-        
-        vote_view = VoteView(question2, responses, time2, interaction, self.creator_id, self.ctx)
-        
-        embed = discord.Embed(
-            title=f"🗳️ Голосование: {question2}",
-            description="Нажмите на кнопку с вашим вариантом, чтобы проголосовать!",
-            color=discord.Color.purple()
-        )
-        embed.set_footer(text=f"Голосование активно {time2} минут | Создатель может завершить досрочно")
-        
-        vote_message = await interaction.channel.send(embed=embed, view=vote_view)
-        vote_view.message = vote_message
-        
-        # Закрепляем сообщение с голосованием
-        try:
-            await vote_message.pin()
-        except discord.Forbidden:
-            pass
-        
-        # Ждем указанное время для голосования
-        start_time = asyncio.get_event_loop().time()
-        while vote_view.is_active:
-            await asyncio.sleep(5)
-            if asyncio.get_event_loop().time() - start_time >= time2 * 60:
-                break
-        
-        # Завершаем голосование и получаем результаты
-        final_results = await vote_view.finish_vote()
-        
-        # Открепляем сообщение с голосованием
-        try:
-            await vote_message.unpin()
-        except discord.Forbidden:
-            pass
-        
-        # Закрепляем финальные результаты на время, указанное для опроса
-        if final_results:
-            final_message = await interaction.channel.send(embed=final_results)
+            # Проверяем, что это тот же пользователь
+            if interaction.user.id != self.creator_id:
+                await interaction.response.send_message("❌ Вы не создавали этот опрос!", ephemeral=True)
+                return
+            
+            # Получаем данные
+            question1 = self.question1.value
+            
+            # Парсим время и напоминание для опроса
             try:
-                await final_message.pin()
-                # Открепляем через время, указанное для опроса
-                await asyncio.sleep(time1 * 60)
+                time1, reminder1 = self.parse_time_reminder(self.time_reminder1.value)
+            except ValueError as e:
+                await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+                return
+            
+            question2 = self.question2.value
+            
+            # Парсим время и напоминание для голосования
+            try:
+                time2, reminder2 = self.parse_time_reminder(self.time_reminder2.value)
+            except ValueError as e:
+                await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+                return
+            
+            # Проверяем ответ на 5 шаге
+            enable_pin = self.enable_pin_function.value.lower().strip()
+            if enable_pin not in ["да", "нет", "yes", "no"]:
+                await interaction.response.send_message("❌ Введите 'да' или 'нет'!", ephemeral=True)
+                return
+            
+            is_pin_enabled = enable_pin in ["да", "yes"]
+            
+            # Удаляем сообщение с кнопкой
+            if self.original_message:
                 try:
-                    await final_message.unpin()
-                except discord.Forbidden:
+                    await self.original_message.delete()
+                except (discord.NotFound, discord.Forbidden):
                     pass
+            
+            # Удаляем сообщение отправителя команды
+            if self.command_message:
+                try:
+                    await self.command_message.delete()
+                except (discord.NotFound, discord.Forbidden):
+                    pass
+            
+            # Устанавливаем флаг активного опроса
+            active_poll = True
+            
+            await interaction.response.send_message(
+                f"✅ **Опрос создается!**\n\n"
+                f"**Первый опрос:** {question1}\n"
+                f"**Время:** {time1} минут\n"
+                f"**Напоминание через:** {reminder1} час(ов)\n\n"
+                f"**Второй опрос (голосование):** {question2}\n"
+                f"**Время:** {time2} минут\n"
+                f"**Напоминание через:** {reminder2} час(ов)\n\n"
+                f"**Варианты ответов (временная/постоянная):** {'Включены' if is_pin_enabled else 'Выключены'}",
+                ephemeral=True
+            )
+            
+            # Создаем первый опрос
+            poll_view = PollView(question1, time1, reminder1, interaction, self.creator_id, self.ctx, is_pin_enabled)
+            
+            embed = discord.Embed(
+                title=f"📊 Опрос: {question1}",
+                description="Нажмите кнопку ниже, чтобы оставить свой ответ!",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text=f"Опрос активен {time1} минут | Создатель может завершить досрочно")
+            
+            message = await interaction.channel.send(embed=embed, view=poll_view)
+            poll_view.message = message
+            
+            # Закрепляем сообщение
+            try:
+                await message.pin()
             except discord.Forbidden:
                 pass
-        
-        active_poll = False
+            
+            # Запускаем задачу напоминания
+            reminder_task1 = asyncio.create_task(poll_view.send_reminder(reminder1, "опрос"))
+            
+            # Ждем указанное время или досрочного завершения
+            start_time = asyncio.get_event_loop().time()
+            while poll_view.is_active and not poll_view.is_aborted:
+                await asyncio.sleep(5)
+                if asyncio.get_event_loop().time() - start_time >= time1 * 60:
+                    break
+            
+            # Отменяем задачу напоминания
+            reminder_task1.cancel()
+            
+            # Проверяем, был ли опрос прерван
+            if poll_view.is_aborted:
+                await interaction.channel.send("⛔ **Опрос был прерван создателем!**")
+                active_poll = False
+                return
+            
+            # Завершаем опрос и получаем ответы
+            responses = await poll_view.finish_poll()
+            
+            # Открепляем сообщение с опросом
+            try:
+                await message.unpin()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            
+            if not responses:
+                await interaction.channel.send("❌ Нет ответов для создания голосования.")
+                active_poll = False
+                return
+            
+            # Создаем голосование
+            await interaction.channel.send(
+                f"🗳️ **Голосование создано!**\n\n"
+                f"На основе {len(responses)} ответов создано голосование.\n"
+                f"Вопрос: **{question2}**\n"
+                f"Время голосования: **{time2}** минут.\n"
+                f"Напоминание через: **{reminder2}** час(ов)."
+            )
+            
+            vote_view = VoteView(question2, responses, time2, interaction, self.creator_id, self.ctx, is_pin_enabled)
+            
+            embed = discord.Embed(
+                title=f"🗳️ Голосование: {question2}",
+                description="Нажмите на кнопку с вашим вариантом, чтобы проголосовать!",
+                color=discord.Color.purple()
+            )
+            embed.set_footer(text=f"Голосование активно {time2} минут | Создатель может завершить досрочно")
+            
+            vote_message = await interaction.channel.send(embed=embed, view=vote_view)
+            vote_view.message = vote_message
+            
+            # Закрепляем сообщение с голосованием
+            try:
+                await vote_message.pin()
+            except discord.Forbidden:
+                pass
+            
+            # Запускаем задачу напоминания для голосования
+            reminder_task2 = asyncio.create_task(vote_view.send_reminder(reminder2, "голосование"))
+            
+            # Ждем указанное время для голосования
+            start_time = asyncio.get_event_loop().time()
+            while vote_view.is_active and not vote_view.is_aborted:
+                await asyncio.sleep(5)
+                if asyncio.get_event_loop().time() - start_time >= time2 * 60:
+                    break
+            
+            # Отменяем задачу напоминания
+            reminder_task2.cancel()
+            
+            # Проверяем, было ли голосование прервано
+            if vote_view.is_aborted:
+                await interaction.channel.send("⛔ **Голосование было прервано создателем!**")
+                active_poll = False
+                return
+            
+            # Завершаем голосование и получаем результаты
+            final_results = await vote_view.finish_vote()
+            
+            # Открепляем сообщение с голосованием
+            try:
+                await vote_message.unpin()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            
+            # Закрепляем финальные результаты
+            if final_results:
+                final_message = await interaction.channel.send(embed=final_results)
+                try:
+                    await final_message.pin()
+                except discord.Forbidden:
+                    pass
+            
+            active_poll = False
+            
+        except Exception as e:
+            # Логируем ошибку, но не показываем пользователю
+            print(f"Ошибка в создании опроса: {e}")
+            active_poll = False
+    
+    def parse_time_reminder(self, value):
+        """Парсит строку вида 'время / напоминание'"""
+        try:
+            # Проверяем, есть ли разделитель
+            if '/' in value:
+                parts = value.split('/')
+                time_str = parts[0].strip()
+                reminder_str = parts[1].strip()
+            else:
+                # Если нет разделителя, пытаемся распарсить как одно число (время)
+                time_str = value.strip()
+                reminder_str = "1"  # По умолчанию 1 час
+            
+            time_val = int(time_str)
+            reminder_val = int(reminder_str)
+            
+            if time_val <= 0:
+                raise ValueError("Время должно быть больше 0!")
+            
+            if reminder_val < 1:
+                raise ValueError("Напоминание должно быть минимум 1 час!")
+            
+            if reminder_val * 60 > time_val:
+                raise ValueError(f"Время напоминания ({reminder_val} час = {reminder_val*60} мин) не может быть больше времени опроса/голосования ({time_val} мин)!")
+            
+            return time_val, reminder_val
+            
+        except ValueError as e:
+            if str(e).startswith("invalid literal"):
+                raise ValueError("Введите корректные числа! Формат: время (минуты) / напоминание (часы). Пример: 60 / 1")
+            raise e
 
 class PollView(View):
-    def __init__(self, question, timeout_minutes, ctx, creator_id, original_ctx):
+    def __init__(self, question, timeout_minutes, reminder_hours, ctx, creator_id, original_ctx, is_pin_enabled):
         super().__init__(timeout=None)
         self.question = question
         self.responses = {}
         self.timeout_minutes = timeout_minutes
+        self.reminder_hours = reminder_hours
         self.is_active = True
+        self.is_aborted = False
         self.message = None
         self.ctx = ctx
         self.creator_id = creator_id
         self.original_ctx = original_ctx
+        self.is_pin_enabled = is_pin_enabled
+        self.user_pin_choices = {}
         
-    @discord.ui.button(label='✅ Участвовать', style=discord.ButtonStyle.success)
-    async def participate(self, interaction: discord.Interaction, button: Button):
+        # Создаем кнопки
+        self.participate_button = Button(label='✅ Участвовать', style=discord.ButtonStyle.success, custom_id='participate')
+        self.participate_button.callback = self.participate_callback
+        self.add_item(self.participate_button)
+        
+        if is_pin_enabled:
+            permanent_button = Button(label='📌 Постоянная', style=discord.ButtonStyle.secondary, custom_id='permanent_pin')
+            permanent_button.callback = self.create_pin_callback('Постоянная')
+            self.add_item(permanent_button)
+            
+            temporary_button = Button(label='📌 Временная', style=discord.ButtonStyle.secondary, custom_id='temporary_pin')
+            temporary_button.callback = self.create_pin_callback('Временная')
+            self.add_item(temporary_button)
+        
+        finish_button = Button(label='⏹️ Завершить досрочно', style=discord.ButtonStyle.danger, custom_id='finish_early')
+        finish_button.callback = self.finish_early_callback
+        self.add_item(finish_button)
+        
+        abort_button = Button(label='🚫 Прервать', style=discord.ButtonStyle.danger, custom_id='abort_poll')
+        abort_button.callback = self.abort_poll_callback
+        self.add_item(abort_button)
+    
+    async def send_reminder(self, reminder_hours, stage):
+        """Отправляет напоминание через указанное количество часов"""
+        try:
+            await asyncio.sleep(reminder_hours * 3600)
+            
+            if self.is_active and not self.is_aborted:
+                try:
+                    embed = discord.Embed(
+                        title="⏰ Напоминание!",
+                        description=f"**{stage.capitalize()}** еще активен!\n"
+                                   f"Вопрос: **{self.question}**\n"
+                                   f"Осталось времени: **{self.timeout_minutes}** минут\n\n"
+                                   f"Не забудьте оставить свой ответ!",
+                        color=discord.Color.gold()
+                    )
+                    await self.ctx.followup.send(embed=embed)
+                except (discord.NotFound, discord.Forbidden):
+                    # Канал или сообщение удалены
+                    pass
+        except asyncio.CancelledError:
+            # Задача отменена - просто выходим
+            pass
+    
+    async def participate_callback(self, interaction: discord.Interaction):
         if not self.is_active:
             await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
             return
             
-        modal = PollResponseModal(self)
+        modal = PollResponseModal(self, interaction.user.id)
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label='⏹️ Завершить досрочно', style=discord.ButtonStyle.danger)
-    async def finish_early(self, interaction: discord.Interaction, button: Button):
-        # Проверяем, что это создатель опроса или администратор
+    def create_pin_callback(self, pin_type):
+        async def callback(interaction: discord.Interaction):
+            if not self.is_active:
+                await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
+                return
+            
+            self.user_pin_choices[interaction.user.id] = pin_type
+            
+            if interaction.user.id in self.responses:
+                response_text = self.responses[interaction.user.id]["text"]
+                await self.update_user_response(interaction.user.id, response_text, pin_type)
+            
+            await interaction.response.send_message(f"✅ Вы выбрали **{pin_type}** закрепление!", ephemeral=True)
+        return callback
+    
+    async def finish_early_callback(self, interaction: discord.Interaction):
         is_creator = interaction.user.id == self.creator_id
         is_admin = interaction.user.guild_permissions.administrator
         
@@ -1089,27 +1243,77 @@ class PollView(View):
         await self.force_finish()
         await interaction.followup.send("✅ Опрос досрочно завершен!", ephemeral=True)
     
-    async def add_response(self, user_id, response):
-        self.responses[user_id] = response
+    async def abort_poll_callback(self, interaction: discord.Interaction):
+        is_creator = interaction.user.id == self.creator_id
+        is_admin = interaction.user.guild_permissions.administrator
+        
+        if not (is_creator or is_admin):
+            await interaction.response.send_message("❌ Только создатель опроса или администратор может прервать опрос!", ephemeral=True)
+            return
+        
+        self.is_aborted = True
+        self.is_active = False
+        
+        embed = discord.Embed(
+            title="⛔ Опрос прерван",
+            description=f"**Вопрос:** {self.question}\n\nОпрос был прерван создателем!",
+            color=discord.Color.red()
+        )
+        await self.message.edit(embed=embed, view=None)
+        
+        await interaction.response.send_message("✅ Опрос успешно прерван!", ephemeral=True)
+    
+    async def add_response(self, user_id, response_text):
+        pin_type = self.user_pin_choices.get(user_id)
+        self.responses[user_id] = {"text": response_text, "pin_type": pin_type}
         await self.update_message()
+        await self.update_participate_button(user_id)
+    
+    async def update_user_response(self, user_id, response_text, pin_type):
+        if user_id in self.responses:
+            self.responses[user_id] = {"text": response_text, "pin_type": pin_type}
+            await self.update_message()
+    
+    async def update_participate_button(self, user_id):
+        if user_id in self.responses:
+            self.participate_button.label = '✏️ Редактировать'
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except (discord.NotFound, discord.Forbidden):
+                    pass
     
     async def update_message(self):
-        if self.message:
-            embed = discord.Embed(
-                title=f"📊 Опрос: {self.question}",
-                description=f"Участников: {len(self.responses)}\n\nНажмите кнопку ниже, чтобы ответить!",
-                color=discord.Color.blue()
-            )
-            embed.set_footer(text=f"Опрос активен {self.timeout_minutes} минут")
-            
-            if self.responses:
-                last_responses = list(self.responses.items())[-5:]
-                responses_text = "\n".join([f"<@{uid}>: {resp}" for uid, resp in last_responses])
-                if len(self.responses) > 5:
-                    responses_text += f"\n... и еще {len(self.responses) - 5} ответов"
-                embed.add_field(name="📝 Последние ответы", value=responses_text, inline=False)
-            
-            await self.message.edit(embed=embed, view=self)
+        if self.message and not self.is_aborted:
+            try:
+                embed = discord.Embed(
+                    title=f"📊 Опрос: {self.question}",
+                    description=f"Участников: {len(self.responses)}\n\nНажмите кнопку ниже, чтобы ответить!",
+                    color=discord.Color.blue()
+                )
+                embed.set_footer(text=f"Опрос активен {self.timeout_minutes} минут")
+                
+                if self.responses:
+                    pin_responses = []
+                    other_responses = []
+                    
+                    for uid, data in self.responses.items():
+                        if data["pin_type"]:
+                            pin_responses.append((uid, data))
+                        else:
+                            other_responses.append((uid, data))
+                    
+                    all_responses = pin_responses + other_responses
+                    last_responses = all_responses[-5:]
+                    responses_text = "\n".join([f"<@{uid}>: {data['text']}" + (f" ({data['pin_type']})" if data['pin_type'] else "") for uid, data in last_responses])
+                    if len(all_responses) > 5:
+                        responses_text += f"\n... и еще {len(all_responses) - 5} ответов"
+                    embed.add_field(name="📝 Последние ответы", value=responses_text, inline=False)
+                
+                await self.message.edit(embed=embed, view=self)
+            except (discord.NotFound, discord.Forbidden):
+                # Сообщение удалено или нет прав
+                pass
     
     async def force_finish(self):
         self.is_active = False
@@ -1118,6 +1322,9 @@ class PollView(View):
     async def finish_poll(self):
         global active_poll
         self.is_active = False
+        
+        if self.is_aborted:
+            return []
         
         if not self.responses:
             embed = discord.Embed(
@@ -1130,8 +1337,11 @@ class PollView(View):
             return []
         
         all_responses = []
-        for user_id, response in self.responses.items():
-            all_responses.append(f"<@{user_id}>: {response}")
+        for user_id, data in self.responses.items():
+            response_text = data['text']
+            if data['pin_type']:
+                response_text = f"{response_text} - {data['pin_type']}"
+            all_responses.append(f"<@{user_id}>: {response_text}")
         
         embed = discord.Embed(
             title="📊 Результаты опроса",
@@ -1139,46 +1349,112 @@ class PollView(View):
             color=discord.Color.green()
         )
         
-        unique_responses = list(set(self.responses.values()))
+        unique_responses = self.get_unique_responses(list(self.responses.values()))
         
         await self.message.edit(embed=embed, view=None)
         active_poll = False
         return unique_responses
+    
+    def get_unique_responses(self, responses):
+        unique = []
+        for response_data in responses:
+            response = response_data['text']
+            normalized = re.sub(r'\s+', ' ', response.strip().lower())
+            
+            is_duplicate = False
+            for existing in unique:
+                existing_normalized = re.sub(r'\s+', ' ', existing.strip().lower())
+                if existing_normalized == normalized:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique.append(response)
+        
+        return unique
 
 class PollResponseModal(discord.ui.Modal):
-    def __init__(self, poll_view):
+    def __init__(self, poll_view, user_id):
         super().__init__(title="Ваш ответ")
         self.poll_view = poll_view
+        self.user_id = user_id
+        
+        existing_response = ""
+        if user_id in poll_view.responses:
+            existing_response = poll_view.responses[user_id]["text"]
         
         self.response_input = discord.ui.TextInput(
             label="Введите ваш ответ",
             placeholder="Напишите ваш вариант ответа...",
             style=discord.TextStyle.paragraph,
             required=True,
-            max_length=500
+            max_length=500,
+            default=existing_response
         )
         self.add_item(self.response_input)
     
     async def on_submit(self, interaction: discord.Interaction):
-        if not self.poll_view.is_active:
-            await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
-            return
-        
-        await self.poll_view.add_response(interaction.user.id, self.response_input.value)
-        await interaction.response.send_message("✅ Ваш ответ сохранен!", ephemeral=True)
+        try:
+            if not self.poll_view.is_active:
+                await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
+                return
+            
+            if self.poll_view.is_aborted:
+                await interaction.response.send_message("❌ Этот опрос был прерван!", ephemeral=True)
+                return
+            
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ Вы не можете редактировать чужой ответ!", ephemeral=True)
+                return
+            
+            response = self.response_input.value
+            normalized_response = re.sub(r'\s+', ' ', response.strip().lower())
+            
+            for uid, data in self.poll_view.responses.items():
+                if uid == self.user_id:
+                    continue
+                existing_normalized = re.sub(r'\s+', ' ', data['text'].strip().lower())
+                if existing_normalized == normalized_response:
+                    await interaction.response.send_message(
+                        "❌ Такой ответ уже был предложен! Пожалуйста, предложите другой вариант.",
+                        ephemeral=True
+                    )
+                    return
+            
+            pin_type = self.poll_view.user_pin_choices.get(self.user_id)
+            
+            if self.user_id in self.poll_view.responses:
+                # Обновляем существующий ответ
+                self.poll_view.responses[self.user_id]["text"] = response
+                # Обновляем сообщение
+                await self.poll_view.update_message()
+            else:
+                # Добавляем новый ответ
+                await self.poll_view.add_response(self.user_id, response)
+            
+            await interaction.response.send_message("✅ Ваш ответ сохранен!" + (" (с выбранным типом закрепления)" if pin_type else ""), ephemeral=True)
+            
+        except Exception as e:
+            print(f"Ошибка в PollResponseModal: {e}")
+            try:
+                await interaction.response.send_message("❌ Произошла ошибка при сохранении ответа. Попробуйте еще раз.", ephemeral=True)
+            except:
+                pass
 
 class VoteView(View):
-    def __init__(self, question, options, timeout_minutes, ctx, creator_id, original_ctx):
+    def __init__(self, question, options, timeout_minutes, ctx, creator_id, original_ctx, is_pin_enabled):
         super().__init__(timeout=None)
         self.question = question
         self.options = options
         self.votes = {option: [] for option in options}
         self.timeout_minutes = timeout_minutes
         self.is_active = True
+        self.is_aborted = False
         self.message = None
         self.ctx = ctx
         self.creator_id = creator_id
         self.original_ctx = original_ctx
+        self.is_pin_enabled = is_pin_enabled
         
         for option in options:
             button = Button(
@@ -1196,10 +1472,62 @@ class VoteView(View):
         )
         finish_button.callback = self.create_finish_callback()
         self.add_item(finish_button)
+        
+        abort_button = Button(
+            label='🚫 Прервать голосование',
+            style=discord.ButtonStyle.danger,
+            custom_id='abort_vote'
+        )
+        abort_button.callback = self.create_abort_callback()
+        self.add_item(abort_button)
+    
+    async def send_reminder(self, reminder_hours, stage):
+        """Отправляет напоминание через указанное количество часов"""
+        try:
+            await asyncio.sleep(reminder_hours * 3600)
+            
+            if self.is_active and not self.is_aborted:
+                try:
+                    embed = discord.Embed(
+                        title="⏰ Напоминание!",
+                        description=f"**{stage.capitalize()}** еще активно!\n"
+                                   f"Вопрос: **{self.question}**\n"
+                                   f"Осталось времени: **{self.timeout_minutes}** минут\n\n"
+                                   f"Не забудьте проголосовать!",
+                        color=discord.Color.gold()
+                    )
+                    await self.ctx.followup.send(embed=embed)
+                except (discord.NotFound, discord.Forbidden):
+                    # Канал или сообщение удалены
+                    pass
+        except asyncio.CancelledError:
+            # Задача отменена - просто выходим
+            pass
+    
+    def create_abort_callback(self):
+        async def callback(interaction: discord.Interaction):
+            is_creator = interaction.user.id == self.creator_id
+            is_admin = interaction.user.guild_permissions.administrator
+            
+            if not (is_creator or is_admin):
+                await interaction.response.send_message("❌ Только создатель голосования или администратор может прервать голосование!", ephemeral=True)
+                return
+            
+            self.is_aborted = True
+            self.is_active = False
+            
+            embed = discord.Embed(
+                title="⛔ Голосование прервано",
+                description=f"**Вопрос:** {self.question}\n\nГолосование было прервано создателем!",
+                color=discord.Color.red()
+            )
+            await self.message.edit(embed=embed, view=None)
+            
+            await interaction.response.send_message("✅ Голосование успешно прервано!", ephemeral=True)
+        return callback
     
     def create_finish_callback(self):
         async def callback(interaction: discord.Interaction):
-            # Проверяем, что это создатель голосования или администратор
             is_creator = interaction.user.id == self.creator_id
             is_admin = interaction.user.guild_permissions.administrator
             
@@ -1218,6 +1546,10 @@ class VoteView(View):
                 await interaction.response.send_message("❌ Голосование завершено!", ephemeral=True)
                 return
             
+            if self.is_aborted:
+                await interaction.response.send_message("❌ Голосование было прервано!", ephemeral=True)
+                return
+            
             for opt, voters in self.votes.items():
                 if interaction.user.id in voters:
                     voters.remove(interaction.user.id)
@@ -1230,26 +1562,29 @@ class VoteView(View):
         return callback
     
     async def update_message(self):
-        if self.message:
-            embed = discord.Embed(
-                title=f"🗳️ Голосование: {self.question}",
-                color=discord.Color.purple()
-            )
-            
-            total_votes = sum(len(voters) for voters in self.votes.values())
-            
-            for option, voters in self.votes.items():
-                count = len(voters)
-                percentage = (count / total_votes * 100) if total_votes > 0 else 0
-                bar = "█" * int(percentage / 5) + "░" * (20 - int(percentage / 5))
-                embed.add_field(
-                    name=option,
-                    value=f"`{bar}` {count} голосов ({percentage:.1f}%)",
-                    inline=False
+        if self.message and not self.is_aborted:
+            try:
+                embed = discord.Embed(
+                    title=f"🗳️ Голосование: {self.question}",
+                    color=discord.Color.purple()
                 )
-            
-            embed.set_footer(text=f"Всего голосов: {total_votes} | Осталось {self.timeout_minutes} минут")
-            await self.message.edit(embed=embed, view=self)
+                
+                total_votes = sum(len(voters) for voters in self.votes.values())
+                
+                for option, voters in self.votes.items():
+                    count = len(voters)
+                    percentage = (count / total_votes * 100) if total_votes > 0 else 0
+                    bar = "█" * int(percentage / 5) + "░" * (20 - int(percentage / 5))
+                    embed.add_field(
+                        name=option,
+                        value=f"`{bar}` {count} голосов ({percentage:.1f}%)",
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"Всего голосов: {total_votes} | Осталось {self.timeout_minutes} минут")
+                await self.message.edit(embed=embed, view=self)
+            except (discord.NotFound, discord.Forbidden):
+                pass
     
     async def force_finish(self):
         self.is_active = False
@@ -1257,6 +1592,9 @@ class VoteView(View):
     
     async def finish_vote(self):
         self.is_active = False
+        
+        if self.is_aborted:
+            return None
         
         embed = discord.Embed(
             title="🏆 Результаты голосования",
@@ -1300,7 +1638,6 @@ async def create_poll(ctx):
     """Создает опрос с последующим голосованием"""
     global active_poll
     
-    # Проверяем, не активен ли уже опрос
     if active_poll:
         await ctx.send("❌ В данный момент уже идет опрос или голосование! Дождитесь его завершения.", ephemeral=True)
         return
@@ -1312,16 +1649,16 @@ async def create_poll(ctx):
     async def button_callback(interaction: discord.Interaction):
         global active_poll
         
-        # Проверяем, что это тот же пользователь, который вызвал команду
         if interaction.user.id != ctx.author.id:
             await interaction.response.send_message("❌ Вы не вызывали эту команду!", ephemeral=True)
             return
         
-        # Повторно проверяем, не активен ли опрос
         if active_poll:
             await interaction.response.send_message("❌ В данный момент уже идет опрос или голосование! Дождитесь его завершения.", ephemeral=True)
             return
         
+        modal.original_message = interaction.message
+        modal.command_message = ctx.message
         await interaction.response.send_modal(modal)
     
     button = Button(label="📝 Создать опрос", style=discord.ButtonStyle.success)
@@ -1341,11 +1678,12 @@ async def poll_help(ctx):
     )
     embed.add_field(
         name="!create_poll",
-        value="Открывает окно для создания опроса с 4 шагами:\n"
-              "1. Название первого опроса\n"
-              "2. Время для первого опроса (минуты)\n"
-              "3. Название второго опроса (голосование)\n"
-              "4. Время для голосования (минуты)\n\n"
+        value="Открывает окно для создания опроса с 5 шагами:\n"
+              "1. Название опроса\n"
+              "2. Время/Напоминание для опроса (минуты / часы). Пример: 60 / 1\n"
+              "3. Название голосования\n"
+              "4. Время/Напоминание для голосования (минуты / часы). Пример: 60 / 1\n"
+              "5. Включить варианты ответов (да/нет)\n\n"
               "⚠️ Во время активного опроса команда недоступна!",
         inline=False
     )
@@ -1358,11 +1696,19 @@ async def poll_help(ctx):
         name="🔒 Особенности",
         value="• Кнопку 'Создать опрос' может нажать только создатель\n"
               "• Кнопку 'Завершить досрочно' могут использовать создатель и администраторы\n"
-              "• Результаты закрепляются на время, указанное для опроса\n"
-              "• Во время активного опроса/голосования создание нового невозможно",
+              "• Кнопку 'Прервать' могут использовать создатель и администраторы\n"
+              "• Во время активного опроса/голосования создание нового невозможно\n"
+              "• Проверка на дубликаты ответов (с учетом регистра и пробелов)\n"
+              "• 🗑️ Сообщение с кнопкой удаляется после начала создания\n"
+              "• 🗑️ Сообщение с командой !create_poll удаляется после начала создания\n"
+              "• 📌 Кнопки 'Постоянная' и 'Временная' одного цвета\n"
+              "• ✏️ После ответа кнопка меняется на 'Редактировать'\n"
+              "• ⏰ Напоминания отправляются через указанное время\n"
+              "• ⚠️ Напоминание должно быть меньше времени опроса/голосования",
         inline=False
     )
     await ctx.send(embed=embed, ephemeral=True)
+
 
 
 # command
