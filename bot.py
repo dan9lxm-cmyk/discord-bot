@@ -9,7 +9,6 @@ import traceback
 import os
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 # Настройка логирования ошибок
@@ -70,7 +69,6 @@ class ErrorHandler(commands.Cog):
             except:
                 pass
 
-
 # ==================== ПЕРЕХВАТ КРИТИЧЕСКИХ ОШИБОК ====================
 
 def setup_exception_handler():
@@ -89,7 +87,6 @@ def setup_exception_handler():
 
 # Включаем обработчик
 setup_exception_handler()
-
 
 # ==================== НАСТРОЙКИ БОТА ====================
 
@@ -191,7 +188,6 @@ async def find_or_create_role(guild, role_name, color):
         print(f"❌ Ошибка создания роли {role_name}: {e}")
         return None
 
-
 async def assign_newbie_role(member):
     """Выдаёт роль новичка"""
     try:
@@ -204,7 +200,6 @@ async def assign_newbie_role(member):
         print(f"❌ Ошибка выдачи роли новичка: {e}")
     return False
 
-
 async def remove_newbie_role(member):
     """Удаляет роль новичка после регистрации"""
     try:
@@ -216,7 +211,6 @@ async def remove_newbie_role(member):
     except Exception as e:
         print(f"❌ Ошибка удаления роли новичка: {e}")
     return False
-
 
 async def assign_main_role(member):
     """Выдаёт основную роль после регистрации. Ищет по разным вариациям названия."""
@@ -281,7 +275,6 @@ async def assign_main_role(member):
         print(f"❌ Ошибка выдачи основной роли: {e}")
         return False
 
-
 async def assign_main_role_for_guild(guild):
     """Создаёт основную роль на сервере при запуске"""
     try:
@@ -336,7 +329,6 @@ async def assign_main_role_for_guild(guild):
     except Exception as e:
         print(f"❌ Ошибка создания основной роли: {e}")
 
-
 async def assign_gender_role(member, gender):
     """Назначает гендерную роль"""
     if not gender:
@@ -375,7 +367,6 @@ async def assign_gender_role(member, gender):
         print(f"❌ Ошибка назначения гендерной роли: {e}")
         return None
 
-
 async def assign_age_role(member, age):
     """Назначает возрастную роль"""
     if not age:
@@ -408,7 +399,6 @@ async def assign_age_role(member, age):
     except Exception as e:
         print(f"❌ Ошибка назначения возрастной роли: {e}")
         return None
-
 
 async def assign_game_roles(member, games):
     """Назначает игровые роли"""
@@ -455,7 +445,6 @@ async def assign_game_roles(member, games):
     
     return assigned
 
-
 # ==================== ФУНКЦИИ ЛОГИРОВАНИЯ ====================
 
 async def send_registration_log(member):
@@ -472,7 +461,6 @@ async def send_registration_log(member):
         embed.set_thumbnail(url=member.display_avatar.url)
         await channel.send(embed=embed)
 
-
 async def send_role_change_log(member, changes):
     """Уведомление об изменении ролей в лог-канал"""
     channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -485,32 +473,6 @@ async def send_role_change_log(member, changes):
         embed.add_field(name="📋 Изменения", value='\n'.join(changes), inline=False)
         embed.set_footer(text=f"ID: {member.id}")
         await channel.send(embed=embed)
-
-
-async def update_roles_only(interaction: discord.Interaction, user_data):
-    """Только обновляет роли, без уведомлений о регистрации"""
-    member = user_data['member']
-    changes = []
-    
-    if user_data.get('gender'):
-        await assign_gender_role(member, user_data['gender'])
-        gender_display = "👨 Мужчина" if user_data['gender'] == 'male' else "👩 Женщина"
-        changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
-    
-    if user_data.get('age'):
-        await assign_age_role(member, user_data['age'])
-        changes.append(f"{EMOJIS['age']} Возраст: {user_data['age']}")
-    
-    if user_data.get('games'):
-        await assign_game_roles(member, user_data['games'])
-        changes.append(f"{EMOJIS['games']} Игры: {', '.join(user_data['games'])}")
-    
-    # Уведомление пользователю
-    await interaction.user.send("✅ Ваши роли успешно обновлены!")
-    
-    # Лог в канал
-    await send_role_change_log(member, changes)
-
 
 # ==================== КЛАССЫ ИНТЕРФЕЙСА ====================
 
@@ -555,7 +517,6 @@ class ApplyView(View):
             print(f"Ошибка в apply_button: {e}")
             await interaction.followup.send("❌ Произошла ошибка. Попробуйте позже.", ephemeral=True)
 
-
 class GenderView(View):
     def __init__(self, user_data, from_registration=True):
         super().__init__(timeout=300)
@@ -566,18 +527,33 @@ class GenderView(View):
     async def male_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
         self.user_data['gender'] = 'male'
-        await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина**", ephemeral=True)
-        await show_age_selection(interaction, self.user_data, self.from_registration)
+        
+        if self.from_registration:
+            await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина**", ephemeral=True)
+            await show_age_selection(interaction, self.user_data, self.from_registration)
+        else:
+            member = self.user_data['member']
+            await assign_gender_role(member, 'male')
+            await interaction.followup.send(f"{EMOJIS['male']} Пол обновлён: **Мужчина**", ephemeral=True)
+            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👨 Мужчина"])
+        
         self.stop()
         
     @discord.ui.button(label='Я женщина', style=discord.ButtonStyle.primary, emoji='👩')
     async def female_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
         self.user_data['gender'] = 'female'
-        await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина**", ephemeral=True)
-        await show_age_selection(interaction, self.user_data, self.from_registration)
+        
+        if self.from_registration:
+            await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина**", ephemeral=True)
+            await show_age_selection(interaction, self.user_data, self.from_registration)
+        else:
+            member = self.user_data['member']
+            await assign_gender_role(member, 'female')
+            await interaction.followup.send(f"{EMOJIS['female']} Пол обновлён: **Женщина**", ephemeral=True)
+            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👩 Женщина"])
+        
         self.stop()
-
 
 class AgeView(View):
     def __init__(self, user_data, from_registration=True):
@@ -607,11 +583,18 @@ class AgeView(View):
             await interaction.response.defer()
             clean_age = age.replace('🍼 ', '').replace('🌱 ', '').replace('🌿 ', '').replace('🌳 ', '').replace('🍂 ', '')
             self.user_data['age'] = clean_age
-            await interaction.followup.send(f"{EMOJIS['age']} Принято! Ваш возраст: **{clean_age}**", ephemeral=True)
-            await show_games_selection(interaction, self.user_data, self.from_registration)
+            
+            if self.from_registration:
+                await interaction.followup.send(f"{EMOJIS['age']} Принято! Ваш возраст: **{clean_age}**", ephemeral=True)
+                await show_games_selection(interaction, self.user_data, self.from_registration)
+            else:
+                member = self.user_data['member']
+                await assign_age_role(member, clean_age)
+                await interaction.followup.send(f"{EMOJIS['age']} Возраст обновлён: **{clean_age}**", ephemeral=True)
+                await send_role_change_log(member, [f"{EMOJIS['age']} Возраст: {clean_age}"])
+            
             self.stop()
         return callback
-
 
 class GamesSelect(Select):
     def __init__(self, user_data, from_registration=True):
@@ -651,14 +634,12 @@ class GamesSelect(Select):
         
         self.view.stop()
 
-
 class GamesView(View):
     def __init__(self, user_data, from_registration=True):
         super().__init__(timeout=300)
         self.user_data = user_data
         self.from_registration = from_registration
         self.add_item(GamesSelect(user_data, from_registration))
-
 
 class ChangeGamesView(View):
     def __init__(self):
@@ -749,7 +730,6 @@ class ChangeGamesView(View):
         except discord.Forbidden:
             await interaction.followup.send("❌ Откройте личные сообщения!", ephemeral=True)
 
-
 # ==================== ФУНКЦИИ ПОКАЗА ВОПРОСОВ ====================
 
 async def show_age_selection(interaction: discord.Interaction, user_data, from_registration=True):
@@ -763,7 +743,6 @@ async def show_age_selection(interaction: discord.Interaction, user_data, from_r
     view = AgeView(user_data, from_registration)
     await interaction.user.send(embed=embed, view=view)
 
-
 async def show_games_selection(interaction: discord.Interaction, user_data, from_registration=True):
     embed = discord.Embed(
         title=f"{EMOJIS['games']} Вопрос 3 из 3: Выберите ваши любимые игры",
@@ -774,7 +753,6 @@ async def show_games_selection(interaction: discord.Interaction, user_data, from
     
     view = GamesView(user_data, from_registration)
     await interaction.user.send(embed=embed, view=view)
-
 
 # ==================== ЗАВЕРШЕНИЕ РЕГИСТРАЦИИ ====================
 
@@ -830,7 +808,6 @@ async def complete_registration(interaction: discord.Interaction, user_data):
     
     await asyncio.sleep(1)
     
-    # Только если это полная регистрация (не смена ролей)
     if from_registration:
         final_embed = discord.Embed(
             title=f"{EMOJIS['crown']} Добро пожаловать в семью!",
@@ -859,10 +836,30 @@ async def complete_registration(interaction: discord.Interaction, user_data):
         final_embed.set_footer(text=f"{EMOJIS['confetti']} Мы рады, что ты с нами!")
         
         await interaction.user.send(embed=final_embed)
-        
-        # Отправляем уведомление о регистрации
         await send_registration_log(member)
 
+async def update_roles_only(interaction: discord.Interaction, user_data):
+    """Только обновляет роли, без уведомлений о регистрации"""
+    member = user_data['member']
+    changes = []
+    
+    if user_data.get('gender'):
+        await assign_gender_role(member, user_data['gender'])
+        gender_display = "👨 Мужчина" if user_data['gender'] == 'male' else "👩 Женщина"
+        changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
+    
+    if user_data.get('age'):
+        await assign_age_role(member, user_data['age'])
+        changes.append(f"{EMOJIS['age']} Возраст: {user_data['age']}")
+    
+    if user_data.get('games'):
+        await assign_game_roles(member, user_data['games'])
+        changes.append(f"{EMOJIS['games']} Игры: {', '.join(user_data['games'])}")
+    
+    await interaction.user.send("✅ Ваши роли успешно обновлены!")
+    
+    if changes:
+        await send_role_change_log(member, changes)
 
 # ==================== СОБЫТИЯ БОТА ====================
 
@@ -879,7 +876,6 @@ async def on_ready():
         status=discord.Status.online
     )
     
-    # Проверка ID каналов
     print(f"✅ WELCOME_CHANNEL_ID: {WELCOME_CHANNEL_ID}")
     print(f"✅ ROLE_CHANGE_CHANNEL_ID: {ROLE_CHANGE_CHANNEL_ID}")
     print(f"✅ LOG_CHANNEL_ID: {LOG_CHANNEL_ID}")
@@ -949,9 +945,8 @@ async def on_ready():
             pass
         
         embed = discord.Embed(
-            title="🔄 Смена игровых ролей",
-            description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои игровые роли\n"
-                       f"или указать пол/возраст, если ещё не указали.\n\n"
+            title="🔄 Смена ролей",
+            description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
                        f"🎮 **Сменить игры** — заменить игровые роли\n"
                        f"👤 **Указать пол** — только если ещё нет\n"
                        f"🎂 **Указать возраст** — только если ещё нет",
@@ -962,7 +957,6 @@ async def on_ready():
         view = ChangeGamesView()
         await role_channel.send(embed=embed, view=view)
 
-
 @bot.event
 async def on_member_join(member):
     """При входе участника выдаём роль новичка"""
@@ -972,7 +966,6 @@ async def on_member_join(member):
     
     await assign_newbie_role(member)
     print(f"📥 {member.name} получил роль {NEWBIE_ROLE_NAME}")
-
 
 # ==================== КОМАНДЫ ====================
 
@@ -1011,7 +1004,6 @@ async def setup_welcome(ctx):
     await channel.send(embed=embed, view=view)
     await ctx.send(f"{EMOJIS['complete']} Приветственное сообщение установлено!")
 
-
 @bot.command(name='setup_roles')
 @commands.has_permissions(administrator=True)
 async def setup_role_channel(ctx):
@@ -1032,9 +1024,8 @@ async def setup_role_channel(ctx):
         pass
     
     embed = discord.Embed(
-        title="🔄 Смена игровых ролей",
-        description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои игровые роли\n"
-                   f"или указать пол/возраст, если ещё не указали.\n\n"
+        title="🔄 Смена ролей",
+        description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
                    f"🎮 **Сменить игры** — заменить игровые роли\n"
                    f"👤 **Указать пол** — только если ещё нет\n"
                    f"🎂 **Указать возраст** — только если ещё нет",
@@ -1045,7 +1036,6 @@ async def setup_role_channel(ctx):
     view = ChangeGamesView()
     await channel.send(embed=embed, view=view)
     await ctx.send(f"{EMOJIS['complete']} Сообщение для смены ролей установлено!")
-
 
 @bot.command(name='test')
 async def test_registration(ctx):
@@ -1076,7 +1066,6 @@ async def test_registration(ctx):
     except Exception as e:
         await ctx.send(f"❌ Ошибка: {e}")
 
-
 @bot.command(name='clear_all')
 @commands.has_permissions(administrator=True)
 async def clear_all(ctx):
@@ -1091,7 +1080,6 @@ async def clear_all(ctx):
             except:
                 pass
     await ctx.send(f"✅ Удалено {deleted} сообщений бота!", delete_after=5)
-
 
 # ==================== ЗАПУСК ====================
 
