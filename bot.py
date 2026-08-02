@@ -8,6 +8,7 @@ import sys
 import traceback
 import os
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -101,16 +102,19 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Добавляем обработчик ошибок
 bot.add_cog(ErrorHandler(bot))
 
-# ID каналов из переменных окружения или значения по умолчанию
-WELCOME_CHANNEL_ID = int(os.environ.get('WELCOME_CHANNEL_ID', 1532715863717707848))
-ROLE_CHANGE_CHANNEL_ID = int(os.environ.get('ROLE_CHANGE_CHANNEL_ID', 1532778968841851022))
+# НАЗВАНИЯ КАНАЛОВ (ищем по названию, а не по ID)
+WELCOME_CHANNEL_NAME = "🏯・ворота・небес・天门・тяньмэнь"
+ROLE_CHANGE_CHANNEL_NAME = "✒️・изменение・ролей"
+DATING_CHANNEL_NAME = "🌙・свидание・под・луной・月约・юэюэ"
+
+# ID лог-канала (можно оставить по ID или тоже переделать на название)
 LOG_CHANNEL_ID = int(os.environ.get('LOG_CHANNEL_ID', 1531831553162874961))
 
 # НАЗВАНИЕ РОЛИ ДЛЯ НОВИЧКОВ (можно изменить)
 NEWBIE_ROLE_NAME = "Новичок"
 
 # Роль, которая выдаётся после регистрации (даёт доступ к серверу)
-MAIN_ROLE_NAME = "Китайский младший"
+MAIN_ROLE_NAME = "🌸・Странник"
 
 # Эмодзи
 EMOJIS = {
@@ -129,7 +133,8 @@ EMOJIS = {
     'fire': '🔥',
     'rainbow': '🌈',
     'rocket': '🚀',
-    'confetti': '🎊'
+    'confetti': '🎊',
+    'moon': '🌙'
 }
 
 # Цвета для гендерных ролей
@@ -216,18 +221,13 @@ async def assign_main_role(member):
     """Выдаёт основную роль после регистрации. Ищет по разным вариациям названия."""
     try:
         role_variations = [
+            "🌸・Странник",
+            "Странник",
+            "странник",
+            "🌸・странник",
             "Китайский младший",
             "китайский младший",
-            "Китайский Младший",
-            "китайский Младший",
-            "Китайский младшый",
-            "китайский младшый",
-            "Младший китайский",
-            "младший китайский",
-            "Китаец",
-            "китаец",
-            "China",
-            "china"
+            "Китайский Младший"
         ]
         
         found_role = None
@@ -279,18 +279,13 @@ async def assign_main_role_for_guild(guild):
     """Создаёт основную роль на сервере при запуске"""
     try:
         role_variations = [
+            "🌸・Странник",
+            "Странник",
+            "странник",
+            "🌸・странник",
             "Китайский младший",
             "китайский младший",
-            "Китайский Младший",
-            "китайский Младший",
-            "Китайский младшый",
-            "китайский младшый",
-            "Младший китайский",
-            "младший китайский",
-            "Китаец",
-            "китаец",
-            "China",
-            "china"
+            "Китайский Младший"
         ]
         
         found_role = None
@@ -336,13 +331,13 @@ async def assign_gender_role(member, gender):
         return None
         
     if gender == 'male':
-        role_name = 'Мужчина'
+        role_name = 'Воин'
         color = GENDER_COLORS['male']
-        opposite = ['Женщина', 'Ж', 'Жен', 'Female', 'Woman', 'Девушка', 'Тянка', 'Тян', 'Тяночка']
+        opposite = ['Цветок', 'Женщина', 'Ж', 'Жен', 'Female', 'Woman', 'Девушка', 'Тянка', 'Тян', 'Тяночка']
     else:
-        role_name = 'Женщина'
+        role_name = 'Цветок'
         color = GENDER_COLORS['female']
-        opposite = ['Мужчина', 'М', 'Муж', 'Male', 'Man', 'Парень']
+        opposite = ['Воин', 'Мужчина', 'М', 'Муж', 'Male', 'Man', 'Парень']
     
     try:
         role = await find_or_create_role(member.guild, role_name, color)
@@ -474,6 +469,89 @@ async def send_role_change_log(member, changes):
         embed.set_footer(text=f"ID: {member.id}")
         await channel.send(embed=embed)
 
+# ==================== ПРОВЕРКА ЗАЯВОК В КАНАЛЕ ЗНАКОМСТВ ====================
+
+@bot.event
+async def on_message(message):
+    """Проверка сообщений в канале знакомств"""
+    # Игнорируем сообщения от бота
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+    
+    # Проверяем, что сообщение в канале знакомств
+    if message.channel.name == DATING_CHANNEL_NAME:
+        # Проверяем формат заявки
+        required_fields = ['🌙 Имя:', '🎂 Возраст:', '💫 О себе', '🌸 Кого ищу:', '📜 Пожелание/послание:']
+        content = message.content
+        
+        # Проверяем наличие всех полей
+        has_all_fields = True
+        missing_fields = []
+        
+        for field in required_fields:
+            if field not in content:
+                has_all_fields = False
+                missing_fields.append(field)
+        
+        # Проверяем минимальную длину
+        is_too_short = len(content.strip()) < 20
+        
+        if not has_all_fields or is_too_short:
+            # Удаляем сообщение
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            # Создаем embed с причиной удаления
+            embed = discord.Embed(
+                title="❌ Ваша заявка была удалена",
+                description="Похоже, ваша заявка не соответствует формату.",
+                color=discord.Color.red()
+            )
+            
+            if not has_all_fields:
+                missing_fields_str = '\n'.join([f'• {field}' for field in missing_fields])
+                embed.add_field(
+                    name="📋 Отсутствуют следующие поля:",
+                    value=missing_fields_str,
+                    inline=False
+                )
+            
+            if is_too_short:
+                embed.add_field(
+                    name="📝 Слишком короткая заявка",
+                    value="Пожалуйста, заполните заявку более подробно.",
+                    inline=False
+                )
+            
+            embed.add_field(
+                name="📝 Правильный формат заявки:",
+                value="🌙 Имя: <ваше имя>\n"
+                      "🎂 Возраст: <ваш возраст>\n"
+                      "💫 О себе (характер, увлечения): <описание>\n"
+                      "🌸 Кого ищу: <кого вы ищете>\n"
+                      "📜 Пожелание/послание: <ваше пожелание>",
+                inline=False
+            )
+            embed.set_footer(text="Пожалуйста, оформите заявку правильно и отправьте заново.")
+            
+            try:
+                await message.author.send(embed=embed)
+            except:
+                # Если не можем отправить в ЛС, отправляем в канал с упоминанием
+                await message.channel.send(
+                    f"{message.author.mention}, ваша заявка была удалена, так как не соответствует формату. "
+                    f"Проверьте правильность заполнения и отправьте заново.",
+                    delete_after=30
+                )
+            
+            return
+    
+    # Обрабатываем команды
+    await bot.process_commands(message)
+
 # ==================== КЛАССЫ ИНТЕРФЕЙСА ====================
 
 class ApplyView(View):
@@ -501,7 +579,9 @@ class ApplyView(View):
             
             gender_embed = discord.Embed(
                 title=f"{EMOJIS['gender']} Вопрос 1 из 3: Выберите свой пол",
-                description=f"{EMOJIS['star']} Кто вы?",
+                description=f"{EMOJIS['star']} Кто вы?\n\n"
+                           f"👨 **Мужчина** (роль **Воин**)\n"
+                           f"👩 **Женщина** (роль **Цветок**)",
                 color=discord.Color.blue()
             )
             gender_embed.set_footer(text="Нажмите на одну из кнопок ниже")
@@ -523,35 +603,35 @@ class GenderView(View):
         self.user_data = user_data
         self.from_registration = from_registration
         
-    @discord.ui.button(label='Я мужчина', style=discord.ButtonStyle.primary, emoji='👨')
+    @discord.ui.button(label='Я мужчина (Воин)', style=discord.ButtonStyle.primary, emoji='👨')
     async def male_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
         self.user_data['gender'] = 'male'
         
         if self.from_registration:
-            await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина**", ephemeral=True)
+            await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина (Воин)**", ephemeral=True)
             await show_age_selection(interaction, self.user_data, self.from_registration)
         else:
             member = self.user_data['member']
             await assign_gender_role(member, 'male')
-            await interaction.followup.send(f"{EMOJIS['male']} Пол обновлён: **Мужчина**", ephemeral=True)
-            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👨 Мужчина"])
+            await interaction.followup.send(f"{EMOJIS['male']} Пол обновлён: **Мужчина (Воин)**", ephemeral=True)
+            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👨 Мужчина (Воин)"])
         
         self.stop()
         
-    @discord.ui.button(label='Я женщина', style=discord.ButtonStyle.primary, emoji='👩')
+    @discord.ui.button(label='Я женщина (Цветок)', style=discord.ButtonStyle.primary, emoji='👩')
     async def female_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer()
         self.user_data['gender'] = 'female'
         
         if self.from_registration:
-            await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина**", ephemeral=True)
+            await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина (Цветок)**", ephemeral=True)
             await show_age_selection(interaction, self.user_data, self.from_registration)
         else:
             member = self.user_data['member']
             await assign_gender_role(member, 'female')
-            await interaction.followup.send(f"{EMOJIS['female']} Пол обновлён: **Женщина**", ephemeral=True)
-            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👩 Женщина"])
+            await interaction.followup.send(f"{EMOJIS['female']} Пол обновлён: **Женщина (Цветок)**", ephemeral=True)
+            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👩 Женщина (Цветок)"])
         
         self.stop()
 
@@ -673,7 +753,7 @@ class ChangeGamesView(View):
         
         has_gender = False
         for role in member.roles:
-            if role.name.lower() in ['мужчина', 'женщина', 'м', 'ж', 'male', 'female', 'man', 'woman', 'парень', 'девушка', 'тянка', 'тян']:
+            if role.name.lower() in ['воин', 'цветок', 'мужчина', 'женщина', 'м', 'ж', 'male', 'female', 'man', 'woman', 'парень', 'девушка', 'тянка', 'тян']:
                 has_gender = True
                 break
         
@@ -686,7 +766,9 @@ class ChangeGamesView(View):
             
             embed = discord.Embed(
                 title=f"{EMOJIS['gender']} Выберите свой пол",
-                description=f"{EMOJIS['star']} Кто вы?",
+                description=f"{EMOJIS['star']} Кто вы?\n\n"
+                           f"👨 **Мужчина** (роль **Воин**)\n"
+                           f"👩 **Женщина** (роль **Цветок**)",
                 color=discord.Color.blue()
             )
             embed.set_footer(text="Пол можно указать только один раз")
@@ -768,9 +850,9 @@ async def complete_registration(interaction: discord.Interaction, user_data):
     )
     
     if user_data.get('gender') == 'male':
-        gender_display = "👨 Мужчина"
+        gender_display = "👨 Мужчина (Воин)"
     elif user_data.get('gender') == 'female':
-        gender_display = "👩 Женщина"
+        gender_display = "👩 Женщина (Цветок)"
     else:
         gender_display = "❓ Не указан"
     
@@ -845,7 +927,7 @@ async def update_roles_only(interaction: discord.Interaction, user_data):
     
     if user_data.get('gender'):
         await assign_gender_role(member, user_data['gender'])
-        gender_display = "👨 Мужчина" if user_data['gender'] == 'male' else "👩 Женщина"
+        gender_display = "👨 Мужчина (Воин)" if user_data['gender'] == 'male' else "👩 Женщина (Цветок)"
         changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
     
     if user_data.get('age'):
@@ -861,16 +943,9 @@ async def update_roles_only(interaction: discord.Interaction, user_data):
     if changes:
         await send_role_change_log(member, changes)
 
-# commnad
-
-
-
 # ==================== ОПРОСЫ И ГОЛОСОВАНИЯ ====================
 
-import asyncio
 import re
-from discord.ui import Button, View, Modal, TextInput
-import discord
 
 # Глобальная переменная для отслеживания активного опроса
 active_poll = None
@@ -1709,10 +1784,6 @@ async def poll_help(ctx):
     )
     await ctx.send(embed=embed, ephemeral=True)
 
-
-
-# command
-
 # ==================== СОБЫТИЯ БОТА ====================
 
 @bot.event
@@ -1728,86 +1799,122 @@ async def on_ready():
         status=discord.Status.online
     )
     
-    print(f"✅ WELCOME_CHANNEL_ID: {WELCOME_CHANNEL_ID}")
-    print(f"✅ ROLE_CHANGE_CHANNEL_ID: {ROLE_CHANGE_CHANNEL_ID}")
-    print(f"✅ LOG_CHANNEL_ID: {LOG_CHANNEL_ID}")
-    
-    welcome_ch = bot.get_channel(WELCOME_CHANNEL_ID)
-    role_ch = bot.get_channel(ROLE_CHANGE_CHANNEL_ID)
+    # ========== НАХОДИМ КАНАЛЫ ПО НАЗВАНИЮ ==========
+    welcome_ch = None
+    role_ch = None
+    dating_ch = None
     log_ch = bot.get_channel(LOG_CHANNEL_ID)
+    
+    for guild in bot.guilds:
+        for channel in guild.channels:
+            if channel.name == WELCOME_CHANNEL_NAME:
+                welcome_ch = channel
+                # Сохраняем ID для использования в других функциях
+                global WELCOME_CHANNEL_ID
+                WELCOME_CHANNEL_ID = channel.id
+                print(f"✅ Найден приветственный канал: #{channel.name} (ID: {channel.id})")
+            if channel.name == ROLE_CHANGE_CHANNEL_NAME:
+                role_ch = channel
+                global ROLE_CHANGE_CHANNEL_ID
+                ROLE_CHANGE_CHANNEL_ID = channel.id
+                print(f"✅ Найден канал смены ролей: #{channel.name} (ID: {channel.id})")
+            if channel.name == DATING_CHANNEL_NAME:
+                dating_ch = channel
+                global DATING_CHANNEL_ID
+                DATING_CHANNEL_ID = channel.id
+                print(f"✅ Найден канал знакомств: #{channel.name} (ID: {channel.id})")
     
     if welcome_ch:
         print(f"✅ Приветственный канал: #{welcome_ch.name}")
     else:
-        print(f"❌ Приветственный канал НЕ НАЙДЕН!")
+        print(f"❌ Приветственный канал НЕ НАЙДЕН! Проверь название: {WELCOME_CHANNEL_NAME}")
     
     if role_ch:
         print(f"✅ Канал смены ролей: #{role_ch.name}")
     else:
-        print(f"❌ Канал смены ролей НЕ НАЙДЕН!")
+        print(f"❌ Канал смены ролей НЕ НАЙДЕН! Проверь название: {ROLE_CHANGE_CHANNEL_NAME}")
+    
+    if dating_ch:
+        print(f"✅ Канал знакомств: #{dating_ch.name}")
+    else:
+        print(f"❌ Канал знакомств НЕ НАЙДЕН! Проверь название: {DATING_CHANNEL_NAME}")
     
     if log_ch:
         print(f"✅ Лог-канал: #{log_ch.name}")
     else:
         print(f"❌ Лог-канал НЕ НАЙДЕН!")
     
+    # Создаем роли для всех серверов
     for guild in bot.guilds:
         await find_or_create_role(guild, NEWBIE_ROLE_NAME, discord.Color.light_gray())
         await assign_main_role_for_guild(guild)
-        
-        channel = bot.get_channel(WELCOME_CHANNEL_ID)
-        if channel:
-            try:
-                async for message in channel.history(limit=50):
-                    if message.author == bot.user:
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                    await asyncio.sleep(0.5)
-            except:
-                pass
-            
-            embed = discord.Embed(
-                title=f"{EMOJIS['welcome']} Добро пожаловать на сервер **{guild.name}**!",
-                description=f"{EMOJIS['sparkles']} Чтобы получить доступ ко всем каналам,\n"
-                           f"нажмите на кнопку ниже для регистрации!\n\n"
-                           f"{EMOJIS['star']} Это займёт всего пару минут.\n\n"
-                           f"⚠️ **У вас есть роль {NEWBIE_ROLE_NAME}**\n"
-                           f"После регистрации она будет автоматически удалена.",
-                color=discord.Color.blue()
-            )
-            embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-            embed.set_footer(text="Регистрация через личные сообщения")
-            
-            view = ApplyView()
-            await channel.send(embed=embed, view=view)
     
-    role_channel = bot.get_channel(ROLE_CHANGE_CHANNEL_ID)
-    if role_channel:
+    # ========== НАСТРАИВАЕМ ПРИВЕТСТВЕННЫЙ КАНАЛ ==========
+    if welcome_ch:
         try:
-            async for message in role_channel.history(limit=50):
+            # Удаляем старые сообщения бота
+            async for message in welcome_ch.history(limit=50):
                 if message.author == bot.user:
                     try:
                         await message.delete()
                     except:
                         pass
-                await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.5)
         except:
             pass
         
+        # Отправляем новое приветственное сообщение
+        embed = discord.Embed(
+            title=f"{EMOJIS['welcome']} Добро пожаловать на сервер!",
+            description=f"{EMOJIS['sparkles']} Чтобы получить доступ ко всем каналам,\n"
+                       f"нажмите на кнопку ниже для регистрации!\n\n"
+                       f"{EMOJIS['star']} Это займёт всего пару минут.\n\n"
+                       f"⚠️ **У вас есть роль {NEWBIE_ROLE_NAME}**\n"
+                       f"После регистрации она будет автоматически удалена.\n\n"
+                       f"👨 **Мужчина** → роль **Воин**\n"
+                       f"👩 **Женщина** → роль **Цветок**",
+            color=discord.Color.blue()
+        )
+        
+        # Получаем иконку сервера
+        guild = bot.guilds[0] if bot.guilds else None
+        if guild and guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+        
+        embed.set_footer(text="Регистрация через личные сообщения")
+        
+        view = ApplyView()
+        await welcome_ch.send(embed=embed, view=view)
+    
+    # ========== НАСТРАИВАЕМ КАНАЛ СМЕНЫ РОЛЕЙ ==========
+    if role_ch:
+        try:
+            # Удаляем старые сообщения бота
+            async for message in role_ch.history(limit=50):
+                if message.author == bot.user:
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    await asyncio.sleep(0.5)
+        except:
+            pass
+        
+        # Отправляем новое сообщение для смены ролей
         embed = discord.Embed(
             title="🔄 Смена ролей",
             description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
                        f"🎮 **Сменить игры** — заменить игровые роли\n"
                        f"👤 **Указать пол** — только если ещё нет\n"
-                       f"🎂 **Указать возраст** — только если ещё нет",
+                       f"🎂 **Указать возраст** — только если ещё нет\n\n"
+                       f"👨 **Мужчина** → роль **Воин**\n"
+                       f"👩 **Женщина** → роль **Цветок**",
             color=discord.Color.blue()
         )
         embed.set_footer(text="Нажмите на кнопку ниже")
         
         view = ChangeGamesView()
-        await role_channel.send(embed=embed, view=view)
+        await role_ch.send(embed=embed, view=view)
 
 @bot.event
 async def on_member_join(member):
@@ -1824,12 +1931,20 @@ async def on_member_join(member):
 @bot.command(name='setup')
 @commands.has_permissions(administrator=True)
 async def setup_welcome(ctx):
-    channel = ctx.guild.get_channel(WELCOME_CHANNEL_ID)
+    """Пересоздает приветственное сообщение"""
+    # Ищем канал по названию
+    channel = None
+    for ch in ctx.guild.channels:
+        if ch.name == WELCOME_CHANNEL_NAME:
+            channel = ch
+            break
+    
     if not channel:
-        await ctx.send("❌ Укажите правильный ID канала в коде!")
+        await ctx.send(f"❌ Канал '{WELCOME_CHANNEL_NAME}' не найден!")
         return
     
     try:
+        # Удаляем старые сообщения бота
         async for message in channel.history(limit=50):
             if message.author == bot.user:
                 try:
@@ -1840,31 +1955,43 @@ async def setup_welcome(ctx):
     except:
         pass
     
+    # Отправляем новое сообщение
     embed = discord.Embed(
         title=f"{EMOJIS['welcome']} Добро пожаловать на сервер **{ctx.guild.name}**!",
         description=f"{EMOJIS['sparkles']} Чтобы получить доступ ко всем каналам,\n"
                    f"нажмите на кнопку ниже для регистрации!\n\n"
                    f"{EMOJIS['star']} Это займёт всего пару минут.\n\n"
                    f"⚠️ **У вас есть роль {NEWBIE_ROLE_NAME}**\n"
-                   f"После регистрации она будет автоматически удалена.",
+                   f"После регистрации она будет автоматически удалена.\n\n"
+                   f"👨 **Мужчина** → роль **Воин**\n"
+                   f"👩 **Женщина** → роль **Цветок**",
         color=discord.Color.blue()
     )
-    embed.set_thumbnail(url=ctx.guild.icon.url if ctx.guild.icon else None)
+    if ctx.guild.icon:
+        embed.set_thumbnail(url=ctx.guild.icon.url)
     embed.set_footer(text="Регистрация через личные сообщения")
     
     view = ApplyView()
     await channel.send(embed=embed, view=view)
-    await ctx.send(f"{EMOJIS['complete']} Приветственное сообщение установлено!")
+    await ctx.send(f"{EMOJIS['complete']} Приветственное сообщение обновлено!")
 
 @bot.command(name='setup_roles')
 @commands.has_permissions(administrator=True)
 async def setup_role_channel(ctx):
-    channel = bot.get_channel(ROLE_CHANGE_CHANNEL_ID)
+    """Пересоздает сообщение для смены ролей"""
+    # Ищем канал по названию
+    channel = None
+    for ch in ctx.guild.channels:
+        if ch.name == ROLE_CHANGE_CHANNEL_NAME:
+            channel = ch
+            break
+    
     if not channel:
-        await ctx.send("❌ Неверный ID канала для смены ролей!")
+        await ctx.send(f"❌ Канал '{ROLE_CHANGE_CHANNEL_NAME}' не найден!")
         return
     
     try:
+        # Удаляем старые сообщения бота
         async for message in channel.history(limit=50):
             if message.author == bot.user:
                 try:
@@ -1875,22 +2002,26 @@ async def setup_role_channel(ctx):
     except:
         pass
     
+    # Отправляем новое сообщение
     embed = discord.Embed(
         title="🔄 Смена ролей",
         description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
                    f"🎮 **Сменить игры** — заменить игровые роли\n"
                    f"👤 **Указать пол** — только если ещё нет\n"
-                   f"🎂 **Указать возраст** — только если ещё нет",
+                   f"🎂 **Указать возраст** — только если ещё нет\n\n"
+                   f"👨 **Мужчина** → роль **Воин**\n"
+                   f"👩 **Женщина** → роль **Цветок**",
         color=discord.Color.blue()
     )
     embed.set_footer(text="Нажмите на кнопку ниже")
     
     view = ChangeGamesView()
     await channel.send(embed=embed, view=view)
-    await ctx.send(f"{EMOJIS['complete']} Сообщение для смены ролей установлено!")
+    await ctx.send(f"{EMOJIS['complete']} Сообщение для смены ролей обновлено!")
 
 @bot.command(name='test')
 async def test_registration(ctx):
+    """Тестовая регистрация"""
     try:
         member = await ctx.guild.fetch_member(ctx.author.id)
         user_data = {'member': member, 'guild': ctx.guild, 'from_registration': True}
@@ -1903,7 +2034,9 @@ async def test_registration(ctx):
         
         gender_embed = discord.Embed(
             title=f"{EMOJIS['gender']} Вопрос 1 из 3: Выберите свой пол",
-            description=f"{EMOJIS['star']} Кто вы?",
+            description=f"{EMOJIS['star']} Кто вы?\n\n"
+                       f"👨 **Мужчина** (роль **Воин**)\n"
+                       f"👩 **Женщина** (роль **Цветок**)",
             color=discord.Color.blue()
         )
         gender_embed.set_footer(text="Нажмите на одну из кнопок ниже")
