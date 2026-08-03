@@ -1,79 +1,25 @@
 ﻿import discord
 from discord.ext import commands
-from discord.ui import Button, View, Select
+from discord.ui import Button, View, Select, Modal, TextInput
 import asyncio
 import random
 import logging
 import sys
 import traceback
 import os
-from dotenv import load_dotenv
+import json
 import re
+from datetime import datetime
+from dotenv import load_dotenv
 
 load_dotenv()
 
 # Настройка логирования ошибок
 logging.basicConfig(level=logging.INFO)
 
-# ==================== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК ====================
-
-class ErrorHandler(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
-        """Обработка ошибок команд"""
-        if isinstance(error, commands.CommandNotFound):
-            return
-        
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send(f"❌ У вас нет прав для этой команды!")
-            return
-        
-        if isinstance(error, commands.BadArgument):
-            await ctx.send(f"❌ Неправильный аргумент: {error}")
-            return
-        
-        error_msg = f"Ошибка в команде {ctx.command}: {error}\n{traceback.format_exc()}"
-        logging.error(error_msg)
-        
-        await ctx.send(f"❌ Произошла ошибка. Администраторы уведомлены.")
-        
-        log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            try:
-                embed = discord.Embed(
-                    title="❌ Ошибка",
-                    description=f"```py\n{error_msg[:1900]}\n```",
-                    color=discord.Color.red()
-                )
-                await log_channel.send(embed=embed)
-            except:
-                pass
-
-    @commands.Cog.listener()
-    async def on_error(self, event, *args, **kwargs):
-        """Глобальный обработчик ошибок"""
-        error_msg = f"Ошибка в событии {event}:\n{traceback.format_exc()}"
-        logging.error(error_msg)
-        
-        log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            try:
-                embed = discord.Embed(
-                    title="⚠️ Критическая ошибка",
-                    description=f"```py\n{error_msg[:1900]}\n```",
-                    color=discord.Color.red()
-                )
-                await log_channel.send(embed=embed)
-            except:
-                pass
-
 # ==================== ПЕРЕХВАТ КРИТИЧЕСКИХ ОШИБОК ====================
 
 def setup_exception_handler():
-    """Настройка глобального перехвата исключений"""
     def global_exception_handler(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -86,12 +32,10 @@ def setup_exception_handler():
     
     sys.excepthook = global_exception_handler
 
-# Включаем обработчик
 setup_exception_handler()
 
 # ==================== НАСТРОЙКИ БОТА ====================
 
-# Настройки бота
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -99,102 +43,1729 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Добавляем обработчик ошибок
-bot.add_cog(ErrorHandler(bot))
-
-# НАЗВАНИЯ КАНАЛОВ (ищем по названию, а не по ID)
 WELCOME_CHANNEL_NAME = "🏯・ворота・небес・天门・тяньмэнь"
 ROLE_CHANGE_CHANNEL_NAME = "✒️・изменение・ролей"
 DATING_CHANNEL_NAME = "🌙・свидание・под・луной・月约・юэюэ"
-
-# ID лог-канала (можно оставить по ID или тоже переделать на название)
 LOG_CHANNEL_ID = int(os.environ.get('LOG_CHANNEL_ID', 1531831553162874961))
-
-# НАЗВАНИЕ РОЛИ ДЛЯ НОВИЧКОВ (можно изменить)
+ARCHIVE_CHANNEL_NAME = "📜・архив・логи・"
 NEWBIE_ROLE_NAME = "Новичок"
-
-# Роль, которая выдаётся после регистрации (даёт доступ к серверу)
 MAIN_ROLE_NAME = "🌸・Странник"
 
-# Эмодзи
-EMOJIS = {
-    'welcome': '👋',
-    'gender': '👤',
-    'age': '🎂',
-    'games': '🎮',
-    'male': '👨',
-    'female': '👩',
-    'complete': '✅',
-    'star': '⭐',
-    'sparkles': '✨',
-    'crown': '👑',
-    'party': '🎉',
-    'heart': '💖',
-    'fire': '🔥',
-    'rainbow': '🌈',
-    'rocket': '🚀',
-    'confetti': '🎊',
-    'moon': '🌙'
+APPLICATIONS_FILE = "applications_data.json"
+SETTINGS_FILE = "bot_settings.json"
+ACTIVE_CHATS_FILE = "active_chats.json"
+BLOCKED_USERS_FILE = "blocked_users.json"
+TEMP_CHANNELS_FILE = "temp_channels.json"
+CHAT_HISTORY_FILE = "chat_history.json"
+
+# ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ ====================
+
+def load_blocked_users():
+    try:
+        if os.path.exists(BLOCKED_USERS_FILE):
+            with open(BLOCKED_USERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"blocked": {}}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки блокировок: {e}")
+        return {"blocked": {}}
+
+def save_blocked_users(data):
+    try:
+        with open(BLOCKED_USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения блокировок: {e}")
+        return False
+
+def block_user(blocker_id, blocked_id):
+    data = load_blocked_users()
+    blocker_id = str(blocker_id)
+    blocked_id = str(blocked_id)
+    
+    if blocker_id not in data["blocked"]:
+        data["blocked"][blocker_id] = []
+    
+    if blocked_id not in data["blocked"][blocker_id]:
+        data["blocked"][blocker_id].append(blocked_id)
+        save_blocked_users(data)
+        return True
+    return False
+
+def unblock_user(blocker_id, blocked_id):
+    data = load_blocked_users()
+    blocker_id = str(blocker_id)
+    blocked_id = str(blocked_id)
+    
+    if blocker_id in data["blocked"] and blocked_id in data["blocked"][blocker_id]:
+        data["blocked"][blocker_id].remove(blocked_id)
+        save_blocked_users(data)
+        return True
+    return False
+
+def is_user_blocked(blocker_id, blocked_id):
+    data = load_blocked_users()
+    blocker_id = str(blocker_id)
+    blocked_id = str(blocked_id)
+    
+    if blocker_id in data["blocked"]:
+        return blocked_id in data["blocked"][blocker_id]
+    return False
+
+def load_temp_channels():
+    try:
+        if os.path.exists(TEMP_CHANNELS_FILE):
+            with open(TEMP_CHANNELS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"channels": {}}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки временных каналов: {e}")
+        return {"channels": {}}
+
+def save_temp_channels(data):
+    try:
+        with open(TEMP_CHANNELS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения временных каналов: {e}")
+        return False
+
+def add_temp_channel(channel_id, application_id, user1_id, user2_id, is_anonymous=False):
+    data = load_temp_channels()
+    data["channels"][str(channel_id)] = {
+        "application_id": str(application_id),
+        "user1_id": str(user1_id),
+        "user2_id": str(user2_id),
+        "created_at": datetime.now().isoformat(),
+        "is_active": True,
+        "is_anonymous": is_anonymous
+    }
+    save_temp_channels(data)
+    return True
+
+def remove_temp_channel(channel_id):
+    data = load_temp_channels()
+    if str(channel_id) in data["channels"]:
+        data["channels"][str(channel_id)]["is_active"] = False
+        save_temp_channels(data)
+        return True
+    return False
+
+def get_temp_channel(channel_id):
+    data = load_temp_channels()
+    return data["channels"].get(str(channel_id))
+
+def load_settings():
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"welcome_style": "modern"}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки настроек: {e}")
+        return {"welcome_style": "modern"}
+
+def save_settings(settings):
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения настроек: {e}")
+        return False
+
+def get_welcome_style():
+    settings = load_settings()
+    style = settings.get("welcome_style", "modern")
+    if style not in WELCOME_STYLES:
+        style = "modern"
+    return style
+
+def set_welcome_style(style_name):
+    if style_name not in WELCOME_STYLES:
+        return False
+    settings = load_settings()
+    settings["welcome_style"] = style_name
+    return save_settings(settings)
+
+def load_applications_data():
+    try:
+        if os.path.exists(APPLICATIONS_FILE):
+            with open(APPLICATIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"applications": {}}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки данных заявок: {e}")
+        return {"applications": {}}
+
+def save_applications_data(data):
+    try:
+        with open(APPLICATIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения данных заявок: {e}")
+        return False
+
+def load_active_chats():
+    try:
+        if os.path.exists(ACTIVE_CHATS_FILE):
+            with open(ACTIVE_CHATS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"chats": {}}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки активных чатов: {e}")
+        return {"chats": {}}
+
+def save_active_chats(data):
+    try:
+        with open(ACTIVE_CHATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения активных чатов: {e}")
+        return False
+
+def load_chat_history():
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"chats": {}}
+    except Exception as e:
+        print(f"❌ Ошибка загрузки истории чатов: {e}")
+        return {"chats": {}}
+
+def save_chat_history(data):
+    try:
+        with open(CHAT_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения истории чатов: {e}")
+        return False
+
+def save_application(application_id, user_id, username, content_data, approved_by=None, approved_at=None):
+    data = load_applications_data()
+    
+    data["applications"][str(application_id)] = {
+        "user_id": str(user_id),
+        "username": username,
+        "content": content_data,
+        "approved_by": str(approved_by) if approved_by else None,
+        "approved_at": approved_at or datetime.now().isoformat(),
+        "message_id": None,
+        "active_chats": 0,
+        "max_chats": 3,
+        "is_active": True
+    }
+    
+    save_applications_data(data)
+    return True
+
+def update_application_message_id(application_id, message_id):
+    data = load_applications_data()
+    
+    if str(application_id) in data["applications"]:
+        data["applications"][str(application_id)]["message_id"] = str(message_id)
+        save_applications_data(data)
+        return True
+    return False
+
+def delete_application(application_id):
+    data = load_applications_data()
+    if str(application_id) in data["applications"]:
+        del data["applications"][str(application_id)]
+        save_applications_data(data)
+        return True
+    return False
+
+def increment_active_chats(application_id):
+    data = load_applications_data()
+    if str(application_id) in data["applications"]:
+        data["applications"][str(application_id)]["active_chats"] += 1
+        save_applications_data(data)
+        return True
+    return False
+
+def decrement_active_chats(application_id):
+    data = load_applications_data()
+    if str(application_id) in data["applications"]:
+        current = data["applications"][str(application_id)]["active_chats"]
+        if current > 0:
+            data["applications"][str(application_id)]["active_chats"] = current - 1
+            save_applications_data(data)
+            return True
+    return False
+
+def get_active_chats_count(application_id):
+    data = load_applications_data()
+    if str(application_id) in data["applications"]:
+        return data["applications"][str(application_id)].get("active_chats", 0)
+    return 0
+
+# ==================== НАСТРОЙКИ СТИЛЕЙ ПРИВЕТСТВИЯ ====================
+
+WELCOME_STYLES = {
+    "traditional": {
+        "name": "Традиционный китайский",
+        "emoji": "🏮",
+        "title": "🏮 Добро пожаловать в Небесную Империю!",
+        "description": "✨ Приветствую тебя, путник!\nЗдесь, среди облаков и горных вершин,\nтебя ждут новые знакомства и приключения.\n\n⭐ Чтобы ступить на путь культивации,\nнажми на кнопку ниже и пройди регистрацию.\n\n⚠️ **Ты носишь звание {role}**\nПосле церемонии посвящения оно исчезнет.\n\n⚔️ **Мужчина** → станет **Воином**\n🌸 **Женщина** → станет **Цветком**",
+        "color": (200, 50, 50),
+        "footer": "🌙 Под луной начинается твой путь | Небесные Врата"
+    },
+    "poetic": {
+        "name": "Поэтический",
+        "emoji": "🌙",
+        "title": "🌙 Добро пожаловать под Луной Небес!",
+        "description": "✨ Под светом луны и шелестом бамбука,\nраспахиваются врата этого удивительного мира.\n\n⭐ Пройди путь посвящения,\nи стань частью великой истории.\n\n📜 **Твоя роль:** {role}\nПосле регистрации ты обретёшь новое имя.\n\n⚔️ **Мужской путь** → **Воин**\n🌸 **Женский путь** → **Цветок**",
+        "color": (139, 69, 19),
+        "footer": "🌸 Там, где цветут сакуры, начинаются легенды"
+    },
+    "imperial": {
+        "name": "Императорский",
+        "emoji": "👑",
+        "title": "👑 Приветствую в Империи Небесного Дракона!",
+        "description": "✨ По указу Небесного Императора,\nврата дворца открываются для достойных.\n\n⭐ Пройди церемонию представления,\nи займи своё место среди избранных.\n\n📜 **Твой титул:** {role}\nПосле посвящения ты обретёшь новый статус.\n\n⚔️ **Мужчина** → **Воин Дракона**\n🌸 **Женщина** → **Цветок Империи**",
+        "color": (218, 165, 32),
+        "footer": "🏯 Добро пожаловать в Небесный город"
+    },
+    "modern": {
+        "name": "Современный",
+        "emoji": "🌸",
+        "title": "🌸 Тяньмэнь приветствует тебя!",
+        "description": "✨ Добро пожаловать в наше комьюнити,\nгде восточная мудрость встречается с современностью.\n\n⭐ Чтобы стать частью нашей семьи,\nнажми на кнопку и пройди регистрацию.\n\n🎯 **Сейчас ты:** {role}\nПосле регистрации ты получишь доступ ко всему.\n\n⚔️ **Мужчина** → **Воин** (сила и честь)\n🌸 **Женщина** → **Цветок** (грация и красота)",
+        "color": (255, 182, 193),
+        "footer": "🌙 Под луной начинаются новые знакомства"
+    },
+    "anime": {
+        "name": "Аниме-стиль",
+        "emoji": "🎌",
+        "title": "🎌 Добро пожаловать в мир аниме!",
+        "description": "✨ Привет, искатель приключений!\nТы попал в удивительный мир,\nгде каждый день — это новое приключение.\n\n⭐ Чтобы начать своё путешествие,\nнажми на кнопку и пройди регистрацию.\n\n⚠️ **Твой текущий ранг:** {role}\nПосле повышения ты получишь доступ к новым локациям.\n\n⚔️ **Мужчина** → **Воин** (сила и отвага)\n🌸 **Женщина** → **Цветок** (красота и грация)",
+        "color": (255, 105, 180),
+        "footer": "🌟 Пусть удача сопутствует тебе в этом мире!"
+    },
+    "minimal": {
+        "name": "Минималистичный",
+        "emoji": "✦",
+        "title": "✦ Добро пожаловать",
+        "description": "Приветствуем нового участника.\nДля получения доступа к серверу,\nпройдите регистрацию.\n\nРоль: {role}\nПосле регистрации будет заменена.\n\nМужчина → Воин\nЖенщина → Цветок",
+        "color": (100, 100, 100),
+        "footer": "Добро пожаловать в сообщество"
+    }
 }
 
-# Цвета для гендерных ролей
-GENDER_COLORS = {
-    'male': discord.Color.blue(),
-    'female': discord.Color.magenta()
-}
+# ==================== КЛАССЫ ДЛЯ ЧАТОВ ====================
 
-# Цвета для возрастных ролей
-AGE_COLORS = {
-    'Меньше 16 лет': discord.Color.from_rgb(255, 182, 193),
-    '16-17 лет': discord.Color.from_rgb(144, 238, 144),
-    '18-24 лет': discord.Color.from_rgb(60, 179, 113),
-    '25-29 лет': discord.Color.from_rgb(255, 165, 0),
-    '30+ лет': discord.Color.from_rgb(218, 165, 32)
-}
+class ChatManager:
+    @staticmethod
+    def start_chat(application_id, from_user_id, to_user_id, is_anonymous=False):
+        data = load_active_chats()
+        chat_id = f"chat_{application_id}_{from_user_id}_{int(datetime.now().timestamp())}"
+        
+        # Проверяем, есть ли уже активный чат между этими пользователями
+        for existing_chat_id, chat in data["chats"].items():
+            if (chat.get("application_id") == str(application_id) and chat.get("is_active", False) and
+                ((chat.get("from_user_id") == str(from_user_id) and chat.get("to_user_id") == str(to_user_id)) or
+                 (chat.get("from_user_id") == str(to_user_id) and chat.get("to_user_id") == str(from_user_id)))):
+                return existing_chat_id
+        
+        data["chats"][chat_id] = {
+            "application_id": str(application_id),
+            "from_user_id": str(from_user_id),
+            "to_user_id": str(to_user_id),
+            "started_at": datetime.now().isoformat(),
+            "is_active": True,
+            "messages": [],
+            "channel_id": None,
+            "is_anonymous": is_anonymous
+        }
+        
+        save_active_chats(data)
+        increment_active_chats(application_id)
+        return chat_id
+    
+    @staticmethod
+    def end_chat(chat_id):
+        data = load_active_chats()
+        if chat_id in data["chats"]:
+            chat = data["chats"][chat_id]
+            if chat.get("is_active", False):
+                chat["is_active"] = False
+                chat["ended_at"] = datetime.now().isoformat()
+                save_active_chats(data)
+                decrement_active_chats(chat.get("application_id", ""))
+                return True
+        return False
+    
+    @staticmethod
+    def get_active_chat_for_application(application_id):
+        data = load_active_chats()
+        active_chats = []
+        for chat_id, chat in data["chats"].items():
+            if chat.get("application_id") == str(application_id) and chat.get("is_active", False):
+                active_chats.append((chat_id, chat))
+        return active_chats
+    
+    @staticmethod
+    def get_active_chats_for_user(user_id):
+        data = load_active_chats()
+        user_chats = []
+        for chat_id, chat in data["chats"].items():
+            if chat.get("is_active", False) and (str(chat.get("from_user_id", "")) == str(user_id) or str(chat.get("to_user_id", "")) == str(user_id)):
+                user_chats.append((chat_id, chat))
+        return user_chats
+    
+    @staticmethod
+    def is_user_in_chat(user_id, chat_id):
+        data = load_active_chats()
+        if chat_id in data["chats"]:
+            chat = data["chats"][chat_id]
+            return str(chat.get("from_user_id", "")) == str(user_id) or str(chat.get("to_user_id", "")) == str(user_id)
+        return False
+    
+    @staticmethod
+    def add_message(chat_id, from_user_id, message):
+        data = load_active_chats()
+        if chat_id in data["chats"] and data["chats"][chat_id].get("is_active", False):
+            data["chats"][chat_id]["messages"].append({
+                "from": str(from_user_id),
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            })
+            save_active_chats(data)
+            return True
+        return False
+    
+    @staticmethod
+    def get_other_user(chat_id, user_id):
+        data = load_active_chats()
+        if chat_id in data["chats"]:
+            chat = data["chats"][chat_id]
+            if str(chat.get("from_user_id", "")) == str(user_id):
+                return chat.get("to_user_id")
+            elif str(chat.get("to_user_id", "")) == str(user_id):
+                return chat.get("from_user_id")
+        return None
+    
+    @staticmethod
+    def get_chat_messages(chat_id, limit=50):
+        data = load_active_chats()
+        if chat_id in data["chats"]:
+            messages = data["chats"][chat_id].get("messages", [])
+            return messages[-limit:]
+        return []
+    
+    @staticmethod
+    def get_chat_by_id(chat_id):
+        data = load_active_chats()
+        return data["chats"].get(chat_id)
 
-# Цвета для игровых ролей
-GAME_COLORS = [
-    discord.Color.from_rgb(255, 99, 71),
-    discord.Color.from_rgb(65, 105, 225),
-    discord.Color.from_rgb(50, 205, 50),
-    discord.Color.from_rgb(255, 215, 0),
-    discord.Color.from_rgb(138, 43, 226),
-    discord.Color.from_rgb(255, 105, 180),
-    discord.Color.from_rgb(0, 206, 209),
-    discord.Color.from_rgb(220, 20, 60),
-    discord.Color.from_rgb(123, 104, 238),
-    discord.Color.from_rgb(255, 140, 0),
-    discord.Color.from_rgb(154, 205, 50),
-    discord.Color.from_rgb(186, 85, 211)
-]
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ АНОНИМНОСТИ ====================
+
+class AnonymousModal(Modal):
+    def __init__(self, application_id, author_id, requester_id):
+        super().__init__(title="🔒 Настройки чата")
+        self.application_id = application_id
+        self.author_id = author_id
+        self.requester_id = requester_id
+        
+        self.anonymous_choice = TextInput(
+            label="Анонимный чат? (да/нет)",
+            placeholder="Введите 'да' или 'нет'",
+            default="да",
+            required=True,
+            max_length=10
+        )
+        self.add_item(self.anonymous_choice)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            choice = self.anonymous_choice.value.lower().strip()
+            is_anonymous = choice in ["да", "yes", "true", "1"]
+            
+            if choice not in ["да", "нет", "yes", "no", "true", "false", "1", "0"]:
+                await interaction.response.send_message("❌ Введите 'да' или 'нет'!", ephemeral=True)
+                return
+            
+            # Создаем чат
+            guild = interaction.guild
+            if not guild:
+                await interaction.response.send_message("❌ Эта функция доступна только на сервере!", ephemeral=True)
+                return
+            
+            await interaction.response.defer(ephemeral=True)
+            
+            chat_id = ChatManager.start_chat(self.application_id, self.author_id, self.requester_id, is_anonymous)
+            
+            channel = await TemporaryChannelManager.create_channel(
+                guild,
+                self.author_id,
+                self.requester_id,
+                self.application_id,
+                is_anonymous
+            )
+            
+            if channel:
+                try:
+                    owner = await bot.fetch_user(int(self.author_id))
+                    if owner:
+                        embed = discord.Embed(
+                            title="💌 Создан приватный чат!",
+                            description=f"{interaction.user.mention} начал(а) с вами чат!\n\n"
+                                       f"📌 Перейдите в канал: {channel.mention}\n"
+                                       f"🔒 Режим: {'Анонимный' if is_anonymous else 'Открытый'}",
+                            color=discord.Color.green()
+                        )
+                        await owner.send(embed=embed)
+                except Exception as e:
+                    print(f"Ошибка уведомления автора: {e}")
+                
+                await interaction.followup.send(
+                    f"✅ Чат создан! Перейдите в канал: {channel.mention}\n"
+                    f"🔒 Режим: {'Анонимный' if is_anonymous else 'Открытый'}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send("❌ Не удалось создать чат. Попробуйте позже.", ephemeral=True)
+                
+        except Exception as e:
+            print(f"❌ Ошибка в AnonymousModal: {e}")
+            await interaction.response.send_message("❌ Произошла ошибка. Попробуйте позже.", ephemeral=True)
+
+# ==================== УПРАВЛЕНИЕ ВРЕМЕННЫМИ КАНАЛАМИ ====================
+
+class TemporaryChannelManager:
+    @staticmethod
+    async def create_channel(guild, user1_id, user2_id, application_id, is_anonymous=False):
+        try:
+            user1 = await bot.fetch_user(int(user1_id))
+            user2 = await bot.fetch_user(int(user2_id))
+            
+            if not user1 or not user2:
+                print(f"❌ Не удалось получить пользователей: {user1_id}, {user2_id}")
+                return None
+            
+            # Для анонимного чата используем общие имена
+            if is_anonymous:
+                name1 = "Аноним"
+                name2 = "Аноним"
+                channel_name = f"💬-Аноним-{random.randint(1000, 9999)}"
+            else:
+                name1 = re.sub(r'[^a-zA-Z0-9а-яА-Я]', '', user1.name)[:8]
+                name2 = re.sub(r'[^a-zA-Z0-9а-яА-Я]', '', user2.name)[:8]
+                channel_name = f"💬-{name1}-{name2}"
+            
+            # Права доступа
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                guild.me: discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    manage_channels=True,
+                    manage_messages=True,
+                    read_messages=True
+                ),
+                user1: discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    embed_links=True,
+                    add_reactions=True,
+                    read_messages=True
+                ),
+                user2: discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    embed_links=True,
+                    add_reactions=True,
+                    read_messages=True
+                )
+            }
+            
+            # Добавляем админов с правом только чтения
+            for role in guild.roles:
+                if role.permissions.administrator:
+                    overwrites[role] = discord.PermissionOverwrite(
+                        view_channel=True,
+                        read_messages=True,
+                        read_message_history=True,
+                        send_messages=False
+                    )
+            
+            category_name = "💬 Приватные чаты"
+            category = discord.utils.get(guild.categories, name=category_name)
+            if not category:
+                try:
+                    category = await guild.create_category(category_name)
+                    print(f"✅ Создана категория: {category_name}")
+                except Exception as e:
+                    print(f"❌ Ошибка создания категории: {e}")
+                    return None
+            
+            try:
+                channel = await guild.create_text_channel(
+                    channel_name,
+                    category=category,
+                    overwrites=overwrites,
+                    topic=f"Приватный чат | ID: {application_id[:8]} | {'Анонимный' if is_anonymous else 'Открытый'}"
+                )
+                print(f"✅ Создан приватный канал: {channel.name}")
+            except Exception as e:
+                print(f"❌ Ошибка создания канала: {e}")
+                return None
+            
+            add_temp_channel(channel.id, application_id, user1_id, user2_id, is_anonymous)
+            
+            # Обновляем информацию в чате
+            active_chats = ChatManager.get_active_chat_for_application(application_id)
+            for chat_id, chat in active_chats:
+                if (str(chat.get("from_user_id")) == str(user1_id) and str(chat.get("to_user_id")) == str(user2_id)) or \
+                   (str(chat.get("from_user_id")) == str(user2_id) and str(chat.get("to_user_id")) == str(user1_id)):
+                    data = load_active_chats()
+                    if chat_id in data["chats"]:
+                        data["chats"][chat_id]["channel_id"] = str(channel.id)
+                        data["chats"][chat_id]["is_anonymous"] = is_anonymous
+                        save_active_chats(data)
+                    break
+            
+            # Получаем количество активных чатов у владельца анкеты
+            owner_chats_count = get_active_chats_count(application_id)
+            
+            embed = discord.Embed(
+                title="💬 Добро пожаловать в приватный чат!",
+                description=f"Вы общаетесь с другим участником сервера.\n\n"
+                           f"📌 **Правила:**\n"
+                           f"• Будьте вежливы друг с другом\n"
+                           f"• Не используйте оскорбления\n"
+                           f"• Наслаждайтесь общением!\n\n"
+                           f"🔒 **Режим:** {'Анонимный' if is_anonymous else 'Открытый'}\n"
+                           f"📊 **Статус:** У вас активно {owner_chats_count} чатов из 3 возможных.",
+                color=discord.Color.green()
+            )
+            
+            if is_anonymous:
+                embed.add_field(
+                    name="🕵️ Анонимный режим",
+                    value="Ваши имена скрыты! Вы общаетесь как 'Аноним'.",
+                    inline=False
+                )
+            
+            embed.set_footer(text="🔒 Ваш чат приватный и защищенный")
+            
+            view = ChatChannelView(channel.id, user1_id, user2_id, application_id, is_anonymous)
+            
+            try:
+                await channel.send(embed=embed, view=view)
+                await channel.send(f"{user1.mention} {user2.mention}, приятного общения! 🎉")
+            except Exception as e:
+                print(f"❌ Ошибка отправки приветствия: {e}")
+            
+            return channel
+            
+        except Exception as e:
+            print(f"❌ Ошибка создания канала: {e}")
+            traceback.print_exc()
+            return None
+    
+    @staticmethod
+    async def delete_channel(channel):
+        try:
+            if channel:
+                remove_temp_channel(channel.id)
+                await channel.delete(reason="Временный чат завершен")
+                print(f"✅ Удален канал: {channel.name}")
+                return True
+        except Exception as e:
+            print(f"❌ Ошибка удаления канала: {e}")
+            return False
+    
+    @staticmethod
+    async def archive_chat(chat_id, channel):
+        """Сохраняет историю чата в архив"""
+        try:
+            chat_data = ChatManager.get_chat_by_id(chat_id)
+            if not chat_data:
+                return
+            
+            messages = chat_data.get("messages", [])
+            if not messages:
+                return
+            
+            # Получаем информацию о пользователях
+            user1_id = chat_data.get("from_user_id")
+            user2_id = chat_data.get("to_user_id")
+            is_anonymous = chat_data.get("is_anonymous", False)
+            
+            try:
+                user1 = await bot.fetch_user(int(user1_id))
+                user2 = await bot.fetch_user(int(user2_id))
+                user1_name = user1.name if user1 else "Неизвестно"
+                user2_name = user2.name if user2 else "Неизвестно"
+            except:
+                user1_name = "Неизвестно"
+                user2_name = "Неизвестно"
+            
+            # Формируем историю
+            history_text = []
+            for msg in messages:
+                try:
+                    sender = await bot.fetch_user(int(msg["from"]))
+                    sender_name = sender.name if sender else "Неизвестно"
+                except:
+                    sender_name = "Неизвестно"
+                
+                # В анонимном режиме скрываем имена
+                if is_anonymous:
+                    if msg["from"] == user1_id:
+                        sender_name = "Аноним #1"
+                    elif msg["from"] == user2_id:
+                        sender_name = "Аноним #2"
+                
+                timestamp = datetime.fromisoformat(msg["timestamp"]).strftime("%d.%m.%Y %H:%M:%S")
+                history_text.append(f"[{timestamp}] {sender_name}: {msg['message']}")
+            
+            full_history = "\n".join(history_text)
+            
+            # Сохраняем в файл
+            history_data = load_chat_history()
+            history_data["chats"][chat_id] = {
+                "user1_id": user1_id,
+                "user1_name": user1_name,
+                "user2_id": user2_id,
+                "user2_name": user2_name,
+                "is_anonymous": is_anonymous,
+                "started_at": chat_data.get("started_at"),
+                "ended_at": chat_data.get("ended_at", datetime.now().isoformat()),
+                "messages": messages,
+                "full_history": full_history
+            }
+            save_chat_history(history_data)
+            
+            # Отправляем в архивный канал
+            archive_channel = discord.utils.get(channel.guild.channels, name=ARCHIVE_CHANNEL_NAME)
+            if not archive_channel:
+                # Создаем архивный канал
+                overwrites = {
+                    channel.guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+                    channel.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+                }
+                try:
+                    archive_channel = await channel.guild.create_text_channel(
+                        ARCHIVE_CHANNEL_NAME,
+                        overwrites=overwrites,
+                        topic="Архив завершенных чатов"
+                    )
+                    print(f"✅ Создан архивный канал: {archive_channel.name}")
+                except Exception as e:
+                    print(f"❌ Ошибка создания архивного канала: {e}")
+                    return
+            
+            if archive_channel:
+                embed = discord.Embed(
+                    title=f"📜 Архив чата",
+                    description=f"**Чат между:** {user1_name} и {user2_name}\n"
+                               f"**Режим:** {'Анонимный' if is_anonymous else 'Открытый'}\n"
+                               f"**Сообщений:** {len(messages)}\n"
+                               f"**Начат:** {chat_data.get('started_at', '')[:16]}\n"
+                               f"**Завершен:** {chat_data.get('ended_at', datetime.now().isoformat())[:16]}",
+                    color=discord.Color.blue()
+                )
+                
+                # Показываем первые 10 сообщений, остальное скрыто
+                preview = "\n".join(history_text[:10])
+                if len(history_text) > 10:
+                    preview += f"\n... и еще {len(history_text) - 10} сообщений"
+                
+                embed.add_field(name="📝 Превью (первые 10 сообщений)", value=f"```\n{preview[:1000]}\n```", inline=False)
+                embed.add_field(name="📊 Полная история", value="Нажмите кнопку ниже, чтобы увидеть полную историю", inline=False)
+                
+                view = ArchiveView(chat_id)
+                await archive_channel.send(embed=embed, view=view)
+                
+        except Exception as e:
+            print(f"❌ Ошибка архивации чата: {e}")
+
+# ==================== КНОПКИ ДЛЯ АРХИВА ====================
+
+class ArchiveView(View):
+    def __init__(self, chat_id):
+        super().__init__(timeout=3600)
+        self.chat_id = chat_id
+    
+    @discord.ui.button(label='📜 Показать полную историю', style=discord.ButtonStyle.primary, custom_id='show_full_archive')
+    async def show_full_archive(self, interaction: discord.Interaction, button: Button):
+        try:
+            history_data = load_chat_history()
+            chat_data = history_data["chats"].get(self.chat_id)
+            
+            if not chat_data:
+                await interaction.response.send_message("❌ История не найдена!", ephemeral=True)
+                return
+            
+            full_history = chat_data.get("full_history", "")
+            if not full_history:
+                await interaction.response.send_message("❌ История пуста!", ephemeral=True)
+                return
+            
+            # Разбиваем на части
+            if len(full_history) > 1900:
+                parts = [full_history[i:i+1900] for i in range(0, len(full_history), 1900)]
+                for i, part in enumerate(parts):
+                    embed = discord.Embed(
+                        title=f"📜 Полная история чата (часть {i+1}/{len(parts)})",
+                        description=f"```\n{part}\n```",
+                        color=discord.Color.blue()
+                    )
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                    if i < len(parts) - 1:
+                        await asyncio.sleep(0.5)
+            else:
+                embed = discord.Embed(
+                    title="📜 Полная история чата",
+                    description=f"```\n{full_history}\n```",
+                    color=discord.Color.blue()
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                
+        except Exception as e:
+            print(f"❌ Ошибка показа архива: {e}")
+            await interaction.response.send_message("❌ Ошибка при показе истории!", ephemeral=True)
+
+# ==================== КНОПКИ ДЛЯ ЗАПРОСА РАЗРЕШЕНИЯ ====================
+
+class PermissionRequestView(View):
+    def __init__(self, application_id, requester_id, owner_id):
+        super().__init__(timeout=300)
+        self.application_id = application_id
+        self.requester_id = requester_id
+        self.owner_id = owner_id
+        self.response = None
+    
+    @discord.ui.button(label='✅ Разрешить', style=discord.ButtonStyle.success, custom_id='permit_chat')
+    async def permit_chat(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != str(self.owner_id):
+            await interaction.response.send_message("❌ Это сообщение не для вас!", ephemeral=True)
+            return
+        
+        self.response = "permit"
+        self.stop()
+        
+        await interaction.response.send_message("✅ Вы разрешили начать чат!", ephemeral=True)
+        
+        try:
+            requester = await bot.fetch_user(int(self.requester_id))
+            if requester:
+                embed = discord.Embed(
+                    title="✅ Разрешение получено!",
+                    description="Владелец анкеты разрешил начать чат.\n\n"
+                               "📌 Теперь выберите режим чата:",
+                    color=discord.Color.green()
+                )
+                modal = AnonymousModal(self.application_id, self.owner_id, self.requester_id)
+                await requester.send(embed=embed)
+                await requester.send("Нажмите кнопку ниже, чтобы настроить чат:", view=AnonymousStartView(self.application_id, self.owner_id, self.requester_id))
+        except Exception as e:
+            print(f"❌ Ошибка уведомления: {e}")
+    
+    @discord.ui.button(label='❌ Отказать', style=discord.ButtonStyle.danger, custom_id='deny_chat')
+    async def deny_chat(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != str(self.owner_id):
+            await interaction.response.send_message("❌ Это сообщение не для вас!", ephemeral=True)
+            return
+        
+        self.response = "deny"
+        self.stop()
+        
+        await interaction.response.send_message("❌ Вы отказали в начале чата.", ephemeral=True)
+        
+        try:
+            requester = await bot.fetch_user(int(self.requester_id))
+            if requester:
+                await requester.send("❌ Владелец анкеты отказал в начале чата. Попробуйте позже.")
+        except:
+            pass
+    
+    @discord.ui.button(label='🚫 Заблокировать', style=discord.ButtonStyle.danger, custom_id='block_user_from_request')
+    async def block_user_from_request(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != str(self.owner_id):
+            await interaction.response.send_message("❌ Это сообщение не для вас!", ephemeral=True)
+            return
+        
+        if block_user(self.owner_id, self.requester_id):
+            self.response = "block"
+            self.stop()
+            
+            await interaction.response.send_message("🚫 Пользователь заблокирован!", ephemeral=True)
+            
+            try:
+                requester = await bot.fetch_user(int(self.requester_id))
+                if requester:
+                    await requester.send("🚫 Владелец анкеты заблокировал вас!")
+            except:
+                pass
+        else:
+            await interaction.response.send_message("❌ Ошибка при блокировке!", ephemeral=True)
+
+class AnonymousStartView(View):
+    def __init__(self, application_id, author_id, requester_id):
+        super().__init__(timeout=300)
+        self.application_id = application_id
+        self.author_id = author_id
+        self.requester_id = requester_id
+    
+    @discord.ui.button(label='🔒 Анонимный чат', style=discord.ButtonStyle.secondary, custom_id='anonymous_chat')
+    async def anonymous_chat(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != str(self.requester_id):
+            await interaction.response.send_message("❌ Это сообщение не для вас!", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send("❌ Эта функция доступна только на сервере!", ephemeral=True)
+            return
+        
+        chat_id = ChatManager.start_chat(self.application_id, self.author_id, self.requester_id, True)
+        
+        channel = await TemporaryChannelManager.create_channel(
+            guild,
+            self.author_id,
+            self.requester_id,
+            self.application_id,
+            True
+        )
+        
+        if channel:
+            try:
+                owner = await bot.fetch_user(int(self.author_id))
+                if owner:
+                    embed = discord.Embed(
+                        title="💌 Создан приватный чат!",
+                        description=f"{interaction.user.mention} начал(а) с вами чат!\n\n"
+                                   f"📌 Перейдите в канал: {channel.mention}\n"
+                                   f"🔒 Режим: Анонимный",
+                        color=discord.Color.green()
+                    )
+                    await owner.send(embed=embed)
+            except Exception as e:
+                print(f"Ошибка уведомления автора: {e}")
+            
+            await interaction.followup.send(f"✅ Анонимный чат создан! Перейдите в канал: {channel.mention}", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Не удалось создать чат. Попробуйте позже.", ephemeral=True)
+    
+    @discord.ui.button(label='👤 Открытый чат', style=discord.ButtonStyle.primary, custom_id='open_chat')
+    async def open_chat(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != str(self.requester_id):
+            await interaction.response.send_message("❌ Это сообщение не для вас!", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send("❌ Эта функция доступна только на сервере!", ephemeral=True)
+            return
+        
+        chat_id = ChatManager.start_chat(self.application_id, self.author_id, self.requester_id, False)
+        
+        channel = await TemporaryChannelManager.create_channel(
+            guild,
+            self.author_id,
+            self.requester_id,
+            self.application_id,
+            False
+        )
+        
+        if channel:
+            try:
+                owner = await bot.fetch_user(int(self.author_id))
+                if owner:
+                    embed = discord.Embed(
+                        title="💌 Создан приватный чат!",
+                        description=f"{interaction.user.mention} начал(а) с вами чат!\n\n"
+                                   f"📌 Перейдите в канал: {channel.mention}\n"
+                                   f"🔒 Режим: Открытый",
+                        color=discord.Color.green()
+                    )
+                    await owner.send(embed=embed)
+            except Exception as e:
+                print(f"Ошибка уведомления автора: {e}")
+            
+            await interaction.followup.send(f"✅ Открытый чат создан! Перейдите в канал: {channel.mention}", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Не удалось создать чат. Попробуйте позже.", ephemeral=True)
+
+# ==================== КНОПКИ ДЛЯ ИСТОРИИ ====================
+
+class HistoryView(View):
+    def __init__(self, chat_id, messages):
+        super().__init__(timeout=300)
+        self.chat_id = chat_id
+        self.messages = messages
+        self.show_full = False
+    
+    @discord.ui.button(label='📜 Показать полностью', style=discord.ButtonStyle.primary, custom_id='show_full_history')
+    async def show_full_history(self, interaction: discord.Interaction, button: Button):
+        if not ChatManager.is_user_in_chat(interaction.user.id, self.chat_id):
+            await interaction.response.send_message("❌ Вы не являетесь участником этого чата!", ephemeral=True)
+            return
+        
+        self.show_full = True
+        
+        # Получаем информацию об анонимности
+        chat_data = ChatManager.get_chat_by_id(self.chat_id)
+        is_anonymous = chat_data.get("is_anonymous", False) if chat_data else False
+        user1_id = chat_data.get("from_user_id") if chat_data else None
+        user2_id = chat_data.get("to_user_id") if chat_data else None
+        
+        history_text = []
+        for msg in self.messages:
+            try:
+                sender = await bot.fetch_user(int(msg["from"]))
+                sender_name = sender.name if sender else "Неизвестно"
+            except:
+                sender_name = "Неизвестно"
+            
+            if is_anonymous:
+                if msg["from"] == user1_id:
+                    sender_name = "Аноним #1"
+                elif msg["from"] == user2_id:
+                    sender_name = "Аноним #2"
+            
+            timestamp = datetime.fromisoformat(msg["timestamp"]).strftime("%d.%m.%Y %H:%M")
+            history_text.append(f"**[{timestamp}] {sender_name}:** {msg['message']}")
+        
+        full_history = "\n".join(history_text)
+        
+        if len(full_history) > 1900:
+            parts = [full_history[i:i+1900] for i in range(0, len(full_history), 1900)]
+            for i, part in enumerate(parts):
+                embed = discord.Embed(
+                    title=f"📜 Полная история чата (часть {i+1}/{len(parts)})",
+                    description=f"```\n{part}\n```",
+                    color=discord.Color.blue()
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                if i < len(parts) - 1:
+                    await asyncio.sleep(0.5)
+        else:
+            embed = discord.Embed(
+                title="📜 Полная история чата",
+                description=f"```\n{full_history}\n```",
+                color=discord.Color.blue()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+        button.label = '📜 Скрыть'
+        button.style = discord.ButtonStyle.secondary
+        await interaction.message.edit(view=self)
+    
+    @discord.ui.button(label='🔒 Закрыть', style=discord.ButtonStyle.danger, custom_id='close_history')
+    async def close_history(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_message("✅ История закрыта.", ephemeral=True)
+        self.stop()
+
+# ==================== КНОПКИ ДЛЯ КАНАЛА ====================
+
+class ChatChannelView(View):
+    def __init__(self, channel_id, user1_id, user2_id, application_id, is_anonymous=False):
+        super().__init__(timeout=None)
+        self.channel_id = channel_id
+        self.user1_id = user1_id
+        self.user2_id = user2_id
+        self.application_id = application_id
+        self.is_anonymous = is_anonymous
+        self.last_activity = datetime.now()
+    
+    @discord.ui.button(label='🔒 Завершить чат', style=discord.ButtonStyle.danger, custom_id='close_chat_channel')
+    async def close_chat(self, interaction: discord.Interaction, button: Button):
+        try:
+            if str(interaction.user.id) not in [str(self.user1_id), str(self.user2_id)]:
+                await interaction.response.send_message("❌ Вы не являетесь участником этого чата!", ephemeral=True)
+                return
+            
+            channel = interaction.channel
+            
+            if channel.id != self.channel_id:
+                await interaction.response.send_message("❌ Это не тот канал!", ephemeral=True)
+                return
+            
+            other_user_id = self.user2_id if str(interaction.user.id) == str(self.user1_id) else self.user1_id
+            
+            # Получаем ID чата
+            chat_id = None
+            active_chats = ChatManager.get_active_chat_for_application(self.application_id)
+            for cid, chat in active_chats:
+                if (str(chat.get("from_user_id")) == str(self.user1_id) and str(chat.get("to_user_id")) == str(self.user2_id)) or \
+                   (str(chat.get("from_user_id")) == str(self.user2_id) and str(chat.get("to_user_id")) == str(self.user1_id)):
+                    chat_id = cid
+                    break
+            
+            try:
+                other_user = await bot.fetch_user(int(other_user_id))
+                if other_user:
+                    try:
+                        await other_user.send(f"🔒 {interaction.user.mention} завершил(а) чат с вами. Канал будет удален.")
+                    except:
+                        pass
+            except:
+                pass
+            
+            embed = discord.Embed(
+                title="🔒 Чат завершен",
+                description=f"{interaction.user.mention} завершил(а) чат.\nКанал будет удален через 5 секунд.",
+                color=discord.Color.red()
+            )
+            await channel.send(embed=embed)
+            
+            await interaction.response.send_message("✅ Чат завершен! Канал будет удален...", ephemeral=True)
+            
+            # Архивируем чат
+            if chat_id:
+                await TemporaryChannelManager.archive_chat(chat_id, channel)
+                ChatManager.end_chat(chat_id)
+            
+            await asyncio.sleep(5)
+            await TemporaryChannelManager.delete_channel(channel)
+            
+        except Exception as e:
+            print(f"❌ Ошибка при завершении чата: {e}")
+            try:
+                await interaction.response.send_message("❌ Ошибка при завершении чата!", ephemeral=True)
+            except:
+                pass
+    
+    @discord.ui.button(label='🚫 Заблокировать', style=discord.ButtonStyle.danger, custom_id='block_chat_channel')
+    async def block_user_in_chat(self, interaction: discord.Interaction, button: Button):
+        try:
+            if str(interaction.user.id) not in [str(self.user1_id), str(self.user2_id)]:
+                await interaction.response.send_message("❌ Вы не являетесь участником этого чата!", ephemeral=True)
+                return
+            
+            channel = interaction.channel
+            
+            if channel.id != self.channel_id:
+                await interaction.response.send_message("❌ Это не тот канал!", ephemeral=True)
+                return
+            
+            other_user_id = self.user2_id if str(interaction.user.id) == str(self.user1_id) else self.user1_id
+            
+            if str(interaction.user.id) == str(other_user_id):
+                await interaction.response.send_message("❌ Вы не можете заблокировать себя!", ephemeral=True)
+                return
+            
+            if block_user(interaction.user.id, other_user_id):
+                chat_id = None
+                active_chats = ChatManager.get_active_chat_for_application(self.application_id)
+                for cid, chat in active_chats:
+                    if (str(chat.get("from_user_id")) == str(self.user1_id) and str(chat.get("to_user_id")) == str(self.user2_id)) or \
+                       (str(chat.get("from_user_id")) == str(self.user2_id) and str(chat.get("to_user_id")) == str(self.user1_id)):
+                        chat_id = cid
+                        break
+                
+                try:
+                    other_user = await bot.fetch_user(int(other_user_id))
+                    if other_user:
+                        try:
+                            await other_user.send(f"🚫 {interaction.user.mention} заблокировал(а) вас. Чат завершен.")
+                        except:
+                            pass
+                except:
+                    pass
+                
+                embed = discord.Embed(
+                    title="🚫 Пользователь заблокирован",
+                    description=f"{interaction.user.mention} заблокировал(а) другого участника.\nКанал будет удален через 5 секунд.",
+                    color=discord.Color.red()
+                )
+                await channel.send(embed=embed)
+                
+                await interaction.response.send_message("✅ Пользователь заблокирован! Канал будет удален...", ephemeral=True)
+                
+                if chat_id:
+                    await TemporaryChannelManager.archive_chat(chat_id, channel)
+                    ChatManager.end_chat(chat_id)
+                
+                await asyncio.sleep(5)
+                await TemporaryChannelManager.delete_channel(channel)
+                
+            else:
+                await interaction.response.send_message("❌ Ошибка при блокировке пользователя!", ephemeral=True)
+                
+        except Exception as e:
+            print(f"❌ Ошибка при блокировке: {e}")
+            try:
+                await interaction.response.send_message("❌ Ошибка при блокировке!", ephemeral=True)
+            except:
+                pass
+    
+    @discord.ui.button(label='📜 История', style=discord.ButtonStyle.secondary, custom_id='show_history')
+    async def show_history(self, interaction: discord.Interaction, button: Button):
+        try:
+            if str(interaction.user.id) not in [str(self.user1_id), str(self.user2_id)]:
+                await interaction.response.send_message("❌ Вы не являетесь участником этого чата!", ephemeral=True)
+                return
+            
+            channel = interaction.channel
+            
+            if channel.id != self.channel_id:
+                await interaction.response.send_message("❌ Это не тот канал!", ephemeral=True)
+                return
+            
+            chat_id = None
+            active_chats = ChatManager.get_active_chat_for_application(self.application_id)
+            for cid, chat in active_chats:
+                if (str(chat.get("from_user_id")) == str(self.user1_id) and str(chat.get("to_user_id")) == str(self.user2_id)) or \
+                   (str(chat.get("from_user_id")) == str(self.user2_id) and str(chat.get("to_user_id")) == str(self.user1_id)):
+                    chat_id = cid
+                    break
+            
+            if not chat_id:
+                await interaction.response.send_message("❌ Чат не найден!", ephemeral=True)
+                return
+            
+            messages = ChatManager.get_chat_messages(chat_id, limit=50)
+            
+            if not messages:
+                await interaction.response.send_message("📭 История пуста.", ephemeral=True)
+                return
+            
+            chat_data = ChatManager.get_chat_by_id(chat_id)
+            is_anonymous = chat_data.get("is_anonymous", False) if chat_data else False
+            user1_id = chat_data.get("from_user_id") if chat_data else None
+            user2_id = chat_data.get("to_user_id") if chat_data else None
+            
+            preview_text = []
+            for msg in messages[:5]:
+                try:
+                    sender = await bot.fetch_user(int(msg["from"]))
+                    sender_name = sender.name if sender else "Неизвестно"
+                except:
+                    sender_name = "Неизвестно"
+                
+                if is_anonymous:
+                    if msg["from"] == user1_id:
+                        sender_name = "Аноним #1"
+                    elif msg["from"] == user2_id:
+                        sender_name = "Аноним #2"
+                
+                timestamp = datetime.fromisoformat(msg["timestamp"]).strftime("%d.%m.%Y %H:%M")
+                msg_text = msg["message"]
+                if len(msg_text) > 20:
+                    msg_text = msg_text[:20] + "..."
+                preview_text.append(f"**[{timestamp}] {sender_name}:** {msg_text}")
+            
+            preview = "\n".join(preview_text)
+            total_messages = len(messages)
+            
+            embed = discord.Embed(
+                title="📜 История сообщений",
+                description=f"**Всего сообщений:** {total_messages}\n"
+                           f"**Режим:** {'Анонимный' if is_anonymous else 'Открытый'}\n\n"
+                           f"**Последние 5 сообщений:**\n```\n{preview}\n```",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text="Нажмите 'Показать полностью' для всей истории")
+            
+            view = HistoryView(chat_id, messages)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            
+        except Exception as e:
+            print(f"❌ Ошибка при показе истории: {e}")
+            try:
+                await interaction.response.send_message("❌ Ошибка при показе истории!", ephemeral=True)
+            except:
+                pass
+    
+    @discord.ui.button(label='⭐ Оценить', style=discord.ButtonStyle.success, custom_id='rate_chat')
+    async def rate_chat(self, interaction: discord.Interaction, button: Button):
+        try:
+            if str(interaction.user.id) not in [str(self.user1_id), str(self.user2_id)]:
+                await interaction.response.send_message("❌ Вы не являетесь участником этого чата!", ephemeral=True)
+                return
+            
+            embed = discord.Embed(
+                title="⭐ Оцените собеседника",
+                description="Как прошло общение?",
+                color=discord.Color.gold()
+            )
+            
+            view = RatingView(self.application_id, self.user1_id, self.user2_id, interaction.user.id)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            
+        except Exception as e:
+            print(f"❌ Ошибка при оценке: {e}")
+            await interaction.response.send_message("❌ Ошибка при оценке!", ephemeral=True)
+
+# ==================== КНОПКИ ДЛЯ ОЦЕНКИ ====================
+
+class RatingView(View):
+    def __init__(self, application_id, user1_id, user2_id, rater_id):
+        super().__init__(timeout=60)
+        self.application_id = application_id
+        self.user1_id = user1_id
+        self.user2_id = user2_id
+        self.rater_id = rater_id
+        self.rated = False
+    
+    @discord.ui.button(label='⭐ 1', style=discord.ButtonStyle.secondary, custom_id='rate_1')
+    async def rate_1(self, interaction: discord.Interaction, button: Button):
+        await self.handle_rating(interaction, 1)
+    
+    @discord.ui.button(label='⭐ 2', style=discord.ButtonStyle.secondary, custom_id='rate_2')
+    async def rate_2(self, interaction: discord.Interaction, button: Button):
+        await self.handle_rating(interaction, 2)
+    
+    @discord.ui.button(label='⭐ 3', style=discord.ButtonStyle.secondary, custom_id='rate_3')
+    async def rate_3(self, interaction: discord.Interaction, button: Button):
+        await self.handle_rating(interaction, 3)
+    
+    @discord.ui.button(label='⭐ 4', style=discord.ButtonStyle.secondary, custom_id='rate_4')
+    async def rate_4(self, interaction: discord.Interaction, button: Button):
+        await self.handle_rating(interaction, 4)
+    
+    @discord.ui.button(label='⭐ 5', style=discord.ButtonStyle.secondary, custom_id='rate_5')
+    async def rate_5(self, interaction: discord.Interaction, button: Button):
+        await self.handle_rating(interaction, 5)
+    
+    async def handle_rating(self, interaction: discord.Interaction, rating: int):
+        if self.rated:
+            await interaction.response.send_message("❌ Вы уже оценили!", ephemeral=True)
+            return
+        
+        if str(interaction.user.id) != str(self.rater_id):
+            await interaction.response.send_message("❌ Это не ваша оценка!", ephemeral=True)
+            return
+        
+        self.rated = True
+        other_user_id = self.user2_id if str(interaction.user.id) == str(self.user1_id) else self.user1_id
+        
+        try:
+            other_user = await bot.fetch_user(int(other_user_id))
+            if other_user:
+                embed = discord.Embed(
+                    title="⭐ Новая оценка!",
+                    description=f"{interaction.user.mention} оценил(а) вас на {rating} ⭐",
+                    color=discord.Color.gold()
+                )
+                await other_user.send(embed=embed)
+        except:
+            pass
+        
+        await interaction.response.send_message(f"✅ Оценка {rating} ⭐ сохранена!", ephemeral=True)
+        self.stop()
+
+# ==================== КНОПКИ ДЛЯ ЗАЯВКИ ====================
+
+class ChatButtons(View):
+    def __init__(self, application_id, author_id, message_id=None):
+        super().__init__(timeout=None)
+        self.application_id = application_id
+        self.author_id = author_id
+        self.message_id = message_id
+    
+    @discord.ui.button(label='💬 Начать чат', style=discord.ButtonStyle.success, custom_id='start_chat_from_app')
+    async def start_chat(self, interaction: discord.Interaction, button: Button):
+        try:
+            if str(interaction.user.id) == str(self.author_id):
+                await interaction.response.send_message("❌ Вы не можете начать чат с самим собой!", ephemeral=True)
+                return
+            
+            data = load_applications_data()
+            app_data = data["applications"].get(str(self.application_id))
+            if not app_data:
+                await interaction.response.send_message("❌ Эта заявка уже удалена!", ephemeral=True)
+                return
+            
+            if is_user_blocked(self.author_id, interaction.user.id):
+                await interaction.response.send_message("❌ Автор заявки заблокировал вас!", ephemeral=True)
+                return
+            
+            if is_user_blocked(interaction.user.id, self.author_id):
+                await interaction.response.send_message("❌ Вы заблокировали автора заявки!", ephemeral=True)
+                return
+            
+            # Проверяем, есть ли уже активный чат между этими пользователями
+            active_chats = ChatManager.get_active_chat_for_application(self.application_id)
+            for chat_id, chat in active_chats:
+                if (str(chat.get("from_user_id")) == str(self.author_id) and str(chat.get("to_user_id")) == str(interaction.user.id)) or \
+                   (str(chat.get("from_user_id")) == str(interaction.user.id) and str(chat.get("to_user_id")) == str(self.author_id)):
+                    channel_id = chat.get("channel_id")
+                    if channel_id:
+                        channel = bot.get_channel(int(channel_id))
+                        if channel:
+                            await interaction.response.send_message(f"✅ Вы уже общаетесь в чате! Перейдите в канал: {channel.mention}", ephemeral=True)
+                            return
+                        else:
+                            pass
+            
+            # Проверяем количество активных чатов у владельца
+            active_chats_count = get_active_chats_count(self.application_id)
+            max_chats = app_data.get("max_chats", 3)
+            
+            # Если уже есть 1 активный чат, запрашиваем разрешение на второй
+            if active_chats_count >= 1:
+                try:
+                    owner = await bot.fetch_user(int(self.author_id))
+                    if owner:
+                        embed = discord.Embed(
+                            title="❓ Запрос на начало чата",
+                            description=f"Пользователь {interaction.user.mention} хочет начать с вами чат.\n\n"
+                                       f"📊 **У вас уже активно {active_chats_count} чатов из {max_chats}.**\n"
+                                       f"Разрешить начать еще один чат?",
+                            color=discord.Color.gold()
+                        )
+                        embed.add_field(
+                            name="ℹ️ Информация о пользователе",
+                            value=f"ID: {interaction.user.id}\nИмя: {interaction.user.name}",
+                            inline=False
+                        )
+                        
+                        view = PermissionRequestView(self.application_id, interaction.user.id, self.author_id)
+                        
+                        await owner.send(embed=embed, view=view)
+                        await interaction.response.send_message(
+                            "📨 Владельцу анкеты отправлен запрос на разрешение чата. Ожидайте ответа.",
+                            ephemeral=True
+                        )
+                        return
+                except Exception as e:
+                    print(f"❌ Ошибка отправки запроса владельцу: {e}")
+                    await interaction.response.send_message("❌ Не удалось отправить запрос владельцу анкеты.", ephemeral=True)
+                    return
+            
+            # Если чатов нет, сразу предлагаем выбор анонимности
+            guild = interaction.guild
+            if not guild:
+                await interaction.response.send_message("❌ Эта функция доступна только на сервере!", ephemeral=True)
+                return
+            
+            await interaction.response.defer(ephemeral=True)
+            
+            # Отправляем выбор режима
+            embed = discord.Embed(
+                title="🔒 Выберите режим чата",
+                description="Как вы хотите общаться?",
+                color=discord.Color.blue()
+            )
+            
+            view = AnonymousStartView(self.application_id, self.author_id, interaction.user.id)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                
+        except Exception as e:
+            print(f"❌ Ошибка в start_chat: {e}")
+            try:
+                await interaction.response.send_message("❌ Произошла ошибка. Попробуйте позже.", ephemeral=True)
+            except:
+                pass
+
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ РЕДАКТИРОВАНИЯ ====================
+
+class EditApplicationModal(Modal):
+    def __init__(self, application_data, original_message, view, user_id):
+        super().__init__(title="✏️ Редактирование заявки")
+        self.application_data = application_data
+        self.original_message = original_message
+        self.parent_view = view
+        self.user_id = user_id
+        
+        self.name_input = TextInput(
+            label="🌙 Имя",
+            placeholder="Введите имя...",
+            default=application_data.get('Имя', ''),
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.name_input)
+        
+        self.age_input = TextInput(
+            label="🎂 Возраст",
+            placeholder="Введите возраст...",
+            default=application_data.get('Возраст', ''),
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.age_input)
+        
+        self.about_input = TextInput(
+            label="💫 О себе",
+            placeholder="Расскажите о себе...",
+            default=application_data.get('О себе', ''),
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=1000
+        )
+        self.add_item(self.about_input)
+        
+        self.search_input = TextInput(
+            label="🌸 Кого ищу",
+            placeholder="Кого вы ищете?",
+            default=application_data.get('Кого ищу', ''),
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=500
+        )
+        self.add_item(self.search_input)
+        
+        self.wish_input = TextInput(
+            label="📜 Пожелание",
+            placeholder="Ваше пожелание...",
+            default=application_data.get('Пожелание', ''),
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=500
+        )
+        self.add_item(self.wish_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            self.application_data['Имя'] = self.name_input.value
+            self.application_data['Возраст'] = self.age_input.value
+            self.application_data['О себе'] = self.about_input.value
+            self.application_data['Кого ищу'] = self.search_input.value
+            self.application_data['Пожелание'] = self.wish_input.value
+            
+            embed = self.parent_view.create_embed(self.application_data, self.user_id)
+            await self.original_message.edit(embed=embed)
+            
+            if hasattr(self.parent_view, 'application_id'):
+                data = load_applications_data()
+                app_id = str(self.parent_view.application_id)
+                if app_id in data["applications"]:
+                    data["applications"][app_id]["content"] = self.application_data
+                    save_applications_data(data)
+            
+            await interaction.response.send_message("✅ Заявка успешно отредактирована!", ephemeral=True)
+        except Exception as e:
+            print(f"❌ Ошибка редактирования: {e}")
+            await interaction.response.send_message("❌ Ошибка при редактировании!", ephemeral=True)
+
+# ==================== КЛАСС ДЛЯ КНОПОК МОДЕРАЦИИ ====================
+
+class ModerationButtons(View):
+    def __init__(self, user_id, username, user_discriminator, original_content, channel_id, application_id=None):
+        super().__init__(timeout=86400)
+        self.user_id = user_id
+        self.username = username
+        self.user_discriminator = user_discriminator
+        self.original_content = original_content
+        self.channel_id = channel_id
+        self.decision_made = False
+        self.application_data = original_content.copy()
+        self.moderation_message = None
+        self.application_id = application_id or f"{user_id}_{int(datetime.now().timestamp())}"
+    
+    def create_embed(self, data, user_id=None):
+        embed = discord.Embed(
+            title="📝 Новая заявка на модерацию",
+            description=f"Заявка от пользователя <@{user_id or self.user_id}> требует проверки",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="👤 Пользователь", value=f"<@{user_id or self.user_id}>\n{self.username}", inline=True)
+        embed.add_field(name="🆔 ID", value=str(user_id or self.user_id), inline=True)
+        
+        content_text = ""
+        for key, value in data.items():
+            content_text += f"**{key}:** {value}\n"
+        
+        if content_text:
+            embed.add_field(name="📝 Содержание заявки", value=content_text[:1000], inline=False)
+        
+        embed.set_footer(text="Нажмите кнопку ниже, чтобы одобрить, отклонить или отредактировать заявку")
+        embed.timestamp = discord.utils.utcnow()
+        return embed
+    
+    def get_formatted_content(self):
+        return (f"🌙 Имя: {self.application_data.get('Имя', 'Не указано')}\n"
+                f"🎂 Возраст: {self.application_data.get('Возраст', 'Не указан')}\n"
+                f"💫 О себе: {self.application_data.get('О себе', 'Не указано')}\n"
+                f"🌸 Кого ищу: {self.application_data.get('Кого ищу', 'Не указано')}\n"
+                f"📜 Пожелание: {self.application_data.get('Пожелание', 'Не указано')}")
+    
+    def get_final_content(self):
+        return (f"👤 **Автор заявки:** <@{self.user_id}>\n\n"
+                f"🌙 Имя: {self.application_data.get('Имя', 'Не указано')}\n"
+                f"🎂 Возраст: {self.application_data.get('Возраст', 'Не указан')}\n"
+                f"💫 О себе: {self.application_data.get('О себе', 'Не указано')}\n"
+                f"🌸 Кого ищу: {self.application_data.get('Кого ищу', 'Не указано')}\n"
+                f"📜 Пожелание: {self.application_data.get('Пожелание', 'Не указано')}")
+    
+    @discord.ui.button(label='✅ Одобрить', style=discord.ButtonStyle.success)
+    async def approve_button(self, interaction: discord.Interaction, button: Button):
+        if self.decision_made:
+            await interaction.response.send_message("❌ Решение по этой заявке уже принято!", ephemeral=True)
+            return
+        
+        if not interaction.user.guild_permissions.administrator and not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ У вас нет прав для этого!", ephemeral=True)
+            return
+        
+        self.decision_made = True
+        
+        try:
+            channel = bot.get_channel(self.channel_id)
+            if channel:
+                save_application(
+                    self.application_id,
+                    self.user_id,
+                    self.username,
+                    self.application_data,
+                    interaction.user.id,
+                    datetime.now().isoformat()
+                )
+                
+                chat_buttons = ChatButtons(self.application_id, self.user_id)
+                final_message = await channel.send(
+                    self.get_final_content(),
+                    view=chat_buttons
+                )
+                update_application_message_id(self.application_id, final_message.id)
+                await final_message.add_reaction("✅")
+                
+                embed = discord.Embed(
+                    title="✅ ЗАЯВКА ОДОБРЕНА",
+                    description=f"Заявка пользователя <@{self.user_id}> была одобрена",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Модератор", value=interaction.user.mention, inline=True)
+                embed.add_field(name="ID пользователя", value=str(self.user_id), inline=True)
+                embed.add_field(name="Сохранено", value=f"ID заявки: `{self.application_id}`", inline=True)
+                embed.add_field(name="Заявка", value=f"```\n{self.get_formatted_content()}\n```", inline=False)
+                await interaction.message.edit(embed=embed, view=None)
+                
+                try:
+                    user = await bot.fetch_user(self.user_id)
+                    if user:
+                        embed_user = discord.Embed(
+                            title="✅ Ваша заявка одобрена!",
+                            description="Ваша заявка в канале знакомств была одобрена модерацией и опубликована!",
+                            color=discord.Color.green()
+                        )
+                        embed_user.add_field(
+                            name="📌 Ваша заявка:",
+                            value=f"```\n{self.get_formatted_content()}\n```",
+                            inline=False
+                        )
+                        embed_user.add_field(
+                            name="💬 Как это работает:",
+                            value="Когда кто-то захочет начать чат, он нажмет кнопку **'Начать чат'** под вашей заявкой.\n\n"
+                                  "📊 **Ограничения:**\n"
+                                  "• Одновременно может быть до 3 активных чатов\n"
+                                  "• При попытке начать 2-й чат, вам будет отправлен запрос на разрешение\n"
+                                  "• Вы можете выбрать анонимный или открытый режим чата\n"
+                                  "• После завершения чата, история сохраняется в архиве\n\n"
+                                  "**Внимание!** Диалог приватный - только вы и ваш собеседник видите канал.",
+                            inline=False
+                        )
+                        await user.send(embed=embed_user)
+                except Exception as e:
+                    print(f"Ошибка отправки уведомления пользователю: {e}")
+                
+                await interaction.response.send_message("✅ Заявка одобрена и опубликована!", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Канал не найден!", ephemeral=True)
+        except Exception as e:
+            print(f"❌ Ошибка одобрения: {e}")
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+    
+    @discord.ui.button(label='✏️ Редактировать', style=discord.ButtonStyle.primary)
+    async def edit_button(self, interaction: discord.Interaction, button: Button):
+        if self.decision_made:
+            await interaction.response.send_message("❌ Решение по этой заявке уже принято!", ephemeral=True)
+            return
+        
+        if not interaction.user.guild_permissions.administrator and not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ У вас нет прав для этого!", ephemeral=True)
+            return
+        
+        self.moderation_message = interaction.message
+        modal = EditApplicationModal(self.application_data, interaction.message, self, self.user_id)
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label='❌ Отклонить', style=discord.ButtonStyle.danger)
+    async def reject_button(self, interaction: discord.Interaction, button: Button):
+        if self.decision_made:
+            await interaction.response.send_message("❌ Решение по этой заявке уже принято!", ephemeral=True)
+            return
+        
+        if not interaction.user.guild_permissions.administrator and not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ У вас нет прав для этого!", ephemeral=True)
+            return
+        
+        self.decision_made = True
+        
+        embed = discord.Embed(
+            title="❌ ЗАЯВКА ОТКЛОНЕНА",
+            description=f"Заявка пользователя <@{self.user_id}> была отклонена",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Модератор", value=interaction.user.mention, inline=True)
+        embed.add_field(name="ID пользователя", value=str(self.user_id), inline=True)
+        embed.add_field(name="Заявка", value=f"```\n{self.get_formatted_content()}\n```", inline=False)
+        await interaction.message.edit(embed=embed, view=None)
+        
+        delete_application(self.application_id)
+        
+        try:
+            user = await bot.fetch_user(self.user_id)
+            if user:
+                embed_user = discord.Embed(
+                    title="❌ Ваша заявка была отклонена",
+                    description="К сожалению, ваша заявка в канале знакомств была отклонена модерацией.",
+                    color=discord.Color.red()
+                )
+                embed_user.add_field(
+                    name="📝 Правильный формат заявки:",
+                    value="🌙 Имя: <ваше имя>\n"
+                          "🎂 Возраст: <ваш возраст>\n"
+                          "💫 О себе (характер, увлечения): <описание>\n"
+                          "🌸 Кого ищу: <кого вы ищете>\n"
+                          "📜 Пожелание/послание: <ваше пожелание>",
+                    inline=False
+                )
+                embed_user.set_footer(text="Пожалуйста, оформите заявку правильно и отправьте заново.")
+                await user.send(embed=embed_user)
+        except:
+            pass
+        
+        await interaction.response.send_message("❌ Заявка отклонена!", ephemeral=True)
 
 # ==================== ФУНКЦИИ РАБОТЫ С РОЛЯМИ ====================
 
 async def find_or_create_role(guild, role_name, color):
-    """Находит существующую роль или создаёт новую"""
-    role = discord.utils.get(guild.roles, name=role_name)
-    if role:
-        return role
-    
-    for r in guild.roles:
-        if role_name.lower() in r.name.lower():
-            return r
-    
     try:
+        role = discord.utils.get(guild.roles, name=role_name)
+        if role:
+            return role
+        
+        for r in guild.roles:
+            if role_name.lower() in r.name.lower():
+                return r
+        
         new_role = await guild.create_role(
             name=role_name,
             color=color,
             mentionable=True,
             reason="Автоматическое создание роли ботом"
         )
-        print(f"✅ Создана роль: {new_role.name} (цвет: {color})")
+        print(f"✅ Создана роль: {new_role.name}")
         return new_role
     except Exception as e:
         print(f"❌ Ошибка создания роли {role_name}: {e}")
         return None
 
 async def assign_newbie_role(member):
-    """Выдаёт роль новичка"""
     try:
         role = await find_or_create_role(member.guild, NEWBIE_ROLE_NAME, discord.Color.light_gray())
         if role and role not in member.roles:
@@ -206,7 +1777,6 @@ async def assign_newbie_role(member):
     return False
 
 async def remove_newbie_role(member):
-    """Удаляет роль новичка после регистрации"""
     try:
         role = discord.utils.get(member.guild.roles, name=NEWBIE_ROLE_NAME)
         if role and role in member.roles:
@@ -218,7 +1788,6 @@ async def remove_newbie_role(member):
     return False
 
 async def assign_main_role(member):
-    """Выдаёт основную роль после регистрации. Ищет по разным вариациям названия."""
     try:
         role_variations = [
             "🌸・Странник",
@@ -235,12 +1804,10 @@ async def assign_main_role(member):
             role = discord.utils.get(member.guild.roles, name=variation)
             if role:
                 found_role = role
-                print(f"🔍 Найдена роль: {role.name} (по запросу: {variation})")
+                print(f"🔍 Найдена роль: {role.name}")
                 break
         
         if not found_role:
-            print(f"🔧 Роль '{MAIN_ROLE_NAME}' не найдена, создаю...")
-            
             permissions = discord.Permissions(
                 read_messages=True,
                 send_messages=True,
@@ -261,7 +1828,7 @@ async def assign_main_role(member):
                 mentionable=True,
                 reason="Автоматическое создание основной роли ботом"
             )
-            print(f"✅ Создана основная роль: {found_role.name} с правами на просмотр")
+            print(f"✅ Создана основная роль: {found_role.name}")
         
         if found_role and found_role not in member.roles:
             await member.add_roles(found_role)
@@ -276,7 +1843,6 @@ async def assign_main_role(member):
         return False
 
 async def assign_main_role_for_guild(guild):
-    """Создаёт основную роль на сервере при запуске"""
     try:
         role_variations = [
             "🌸・Странник",
@@ -325,15 +1891,13 @@ async def assign_main_role_for_guild(guild):
         print(f"❌ Ошибка создания основной роли: {e}")
 
 async def assign_gender_role(member, gender):
-    """Назначает гендерную роль"""
     if not gender:
-        print("❌ Пол не указан, пропускаем")
         return None
         
     if gender == 'male':
         role_name = 'Воин'
         color = GENDER_COLORS['male']
-        opposite = ['Цветок', 'Женщина', 'Ж', 'Жен', 'Female', 'Woman', 'Девушка', 'Тянка', 'Тян', 'Тяночка']
+        opposite = ['Цветок', 'Женщина', 'Ж', 'Жен', 'Female', 'Woman', 'Девушка']
     else:
         role_name = 'Цветок'
         color = GENDER_COLORS['female']
@@ -342,7 +1906,6 @@ async def assign_gender_role(member, gender):
     try:
         role = await find_or_create_role(member.guild, role_name, color)
         if not role:
-            print("❌ Не удалось найти/создать гендерную роль")
             return None
         
         for opp_name in opposite:
@@ -353,8 +1916,6 @@ async def assign_gender_role(member, gender):
         if role not in member.roles:
             await member.add_roles(role)
             print(f"✅ Назначена роль: {role.name} -> {member.name}")
-        else:
-            print(f"ℹ️ Роль {role.name} уже есть у {member.name}")
         
         return role
         
@@ -363,9 +1924,7 @@ async def assign_gender_role(member, gender):
         return None
 
 async def assign_age_role(member, age):
-    """Назначает возрастную роль"""
     if not age:
-        print("❌ Возраст не указан, пропускаем")
         return None
         
     role_name = age
@@ -374,7 +1933,6 @@ async def assign_age_role(member, age):
     try:
         role = await find_or_create_role(member.guild, role_name, color)
         if not role:
-            print("❌ Не удалось найти/создать возрастную роль")
             return None
         
         for age_key in AGE_COLORS.keys():
@@ -386,8 +1944,6 @@ async def assign_age_role(member, age):
         if role not in member.roles:
             await member.add_roles(role)
             print(f"✅ Назначена роль: {role.name} -> {member.name}")
-        else:
-            print(f"ℹ️ Роль {role.name} уже есть у {member.name}")
         
         return role
         
@@ -396,9 +1952,7 @@ async def assign_age_role(member, age):
         return None
 
 async def assign_game_roles(member, games):
-    """Назначает игровые роли"""
     if not games:
-        print("❌ Игры не выбраны, пропускаем")
         return []
         
     assigned = []
@@ -443,114 +1997,385 @@ async def assign_game_roles(member, games):
 # ==================== ФУНКЦИИ ЛОГИРОВАНИЯ ====================
 
 async def send_registration_log(member):
-    """Уведомление о регистрации в лог-канал"""
-    channel = bot.get_channel(LOG_CHANNEL_ID)
-    if channel:
-        embed = discord.Embed(
-            title="✅ Новая регистрация",
-            description=f"{member.mention} прошёл полную регистрацию!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="👤 Пользователь", value=member.name, inline=True)
-        embed.add_field(name="🆔 ID", value=member.id, inline=True)
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await channel.send(embed=embed)
+    try:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="✅ Новая регистрация",
+                description=f"{member.mention} прошёл полную регистрацию!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="👤 Пользователь", value=member.name, inline=True)
+            embed.add_field(name="🆔 ID", value=member.id, inline=True)
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await channel.send(embed=embed)
+    except Exception as e:
+        print(f"❌ Ошибка логирования: {e}")
 
 async def send_role_change_log(member, changes):
-    """Уведомление об изменении ролей в лог-канал"""
-    channel = bot.get_channel(LOG_CHANNEL_ID)
-    if channel and changes:
-        embed = discord.Embed(
-            title="🔄 Изменение ролей",
-            description=f"{member.mention} изменил свои роли",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="📋 Изменения", value='\n'.join(changes), inline=False)
-        embed.set_footer(text=f"ID: {member.id}")
-        await channel.send(embed=embed)
+    try:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if channel and changes:
+            embed = discord.Embed(
+                title="🔄 Изменение ролей",
+                description=f"{member.mention} изменил свои роли",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="📋 Изменения", value='\n'.join(changes), inline=False)
+            embed.set_footer(text=f"ID: {member.id}")
+            await channel.send(embed=embed)
+    except Exception as e:
+        print(f"❌ Ошибка логирования: {e}")
 
-# ==================== ПРОВЕРКА ЗАЯВОК В КАНАЛЕ ЗНАКОМСТВ ====================
+# ==================== ОТПРАВКА НА МОДЕРАЦИЮ ====================
+
+async def send_to_moderation(message):
+    try:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if not channel:
+            return
+        
+        content = message.content
+        fields = {}
+        
+        name_match = re.search(r'🌙 Имя:\s*(.+?)(?=\n|$)', content)
+        age_match = re.search(r'🎂 Возраст:\s*(.+?)(?=\n|$)', content)
+        about_match = re.search(r'💫 О себе\s*(.+?)(?=\n🌸|$)', content, re.DOTALL)
+        search_match = re.search(r'🌸 Кого ищу:\s*(.+?)(?=\n📜|$)', content, re.DOTALL)
+        wish_match = re.search(r'📜 Пожелание/послание:\s*(.+?)(?=\n|$)', content, re.DOTALL)
+        
+        if name_match:
+            fields['Имя'] = name_match.group(1).strip()
+        if age_match:
+            fields['Возраст'] = age_match.group(1).strip()
+        if about_match:
+            fields['О себе'] = about_match.group(1).strip()
+        if search_match:
+            fields['Кого ищу'] = search_match.group(1).strip()
+        if wish_match:
+            fields['Пожелание'] = wish_match.group(1).strip()
+        
+        application_id = f"{message.author.id}_{int(datetime.now().timestamp())}"
+        
+        view = ModerationButtons(
+            user_id=message.author.id,
+            username=message.author.name,
+            user_discriminator=message.author.discriminator,
+            original_content=fields,
+            channel_id=message.channel.id,
+            application_id=application_id
+        )
+        
+        embed = view.create_embed(fields, message.author.id)
+        await channel.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"❌ Ошибка отправки на модерацию: {e}")
+
+# ==================== ПРОВЕРКА ЗАЯВОК ====================
+
+async def moderate_existing_messages(channel):
+    if not channel:
+        return
+    
+    print(f"🔍 Начинаю проверку существующих сообщений в канале {channel.name}...")
+    
+    to_moderation_count = 0
+    fixed_messages = 0
+    
+    try:
+        async for message in channel.history(limit=1000):
+            if message.author == bot.user:
+                if not message.components or len(message.components) == 0:
+                    if "Автор заявки:" in message.content:
+                        author_match = re.search(r'Автор заявки: <@!?(\d+)>', message.content)
+                        if author_match:
+                            author_id = author_match.group(1)
+                            data = load_applications_data()
+                            app_id = None
+                            for aid, app in data["applications"].items():
+                                if str(app.get("user_id")) == str(author_id) and str(app.get("message_id")) == str(message.id):
+                                    app_id = aid
+                                    break
+                            
+                            if not app_id:
+                                app_id = f"fixed_{message.id}"
+                                save_application(
+                                    app_id,
+                                    author_id,
+                                    "Пользователь",
+                                    {"Имя": "Восстановлено", "Возраст": "?", "О себе": "?", "Кого ищу": "?", "Пожелание": "?"},
+                                    None,
+                                    datetime.now().isoformat()
+                                )
+                            
+                            chat_buttons = ChatButtons(app_id, author_id, message.id)
+                            try:
+                                await message.edit(view=chat_buttons)
+                                fixed_messages += 1
+                                print(f"✅ Добавлены кнопки к сообщению {message.id}")
+                                await asyncio.sleep(0.5)
+                            except Exception as e:
+                                print(f"❌ Ошибка добавления кнопок: {e}")
+            
+            elif message.author.bot:
+                continue
+            
+            else:
+                has_required_fields = all([
+                    '🌙 Имя:' in message.content,
+                    '🎂 Возраст:' in message.content,
+                    '💫 О себе' in message.content,
+                    '🌸 Кого ищу:' in message.content,
+                    '📜 Пожелание/послание:' in message.content
+                ])
+                
+                if has_required_fields:
+                    try:
+                        await message.delete()
+                        await send_to_moderation(message)
+                        to_moderation_count += 1
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        print(f"❌ Ошибка при отправке на модерацию: {e}")
+        
+        print(f"✅ Проверка завершена! Отправлено на модерацию: {to_moderation_count}, Исправлено сообщений: {fixed_messages}")
+        
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="📋 Отчет о модерации",
+                description=f"Проверка сообщений в канале {channel.mention}",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="🔍 Отправлено на модерацию", value=str(to_moderation_count), inline=True)
+            embed.add_field(name="🔧 Исправлено сообщений", value=str(fixed_messages), inline=True)
+            await log_channel.send(embed=embed)
+            
+    except Exception as e:
+        print(f"❌ Критическая ошибка при модерации: {e}")
+
+# ==================== ПРОВЕРКА НОВЫХ ЗАЯВОК ====================
 
 @bot.event
 async def on_message(message):
-    """Проверка сообщений в канале знакомств"""
-    # Игнорируем сообщения от бота
-    if message.author.bot:
+    try:
+        if message.author.bot:
+            await bot.process_commands(message)
+            return
+        
+        if not isinstance(message.channel, discord.TextChannel):
+            await bot.process_commands(message)
+            return
+        
+        if message.channel.name == DATING_CHANNEL_NAME:
+            has_required_fields = all([
+                '🌙 Имя:' in message.content,
+                '🎂 Возраст:' in message.content,
+                '💫 О себе' in message.content,
+                '🌸 Кого ищу:' in message.content,
+                '📜 Пожелание/послание:' in message.content
+            ])
+            
+            if has_required_fields:
+                try:
+                    await message.delete()
+                    await send_to_moderation(message)
+                    
+                    embed = discord.Embed(
+                        title="🔍 Заявка отправлена на модерацию",
+                        description="Ваша заявка отправлена на проверку модераторам. Ожидайте решения.",
+                        color=discord.Color.gold()
+                    )
+                    embed.add_field(
+                        name="⏰ Время ожидания",
+                        value="Обычно это занимает не более 24 часов.",
+                        inline=False
+                    )
+                    try:
+                        await message.author.send(embed=embed)
+                    except:
+                        await message.channel.send(
+                            f"{message.author.mention}, ваша заявка отправлена на модерацию! Ожидайте решения.",
+                            delete_after=30
+                        )
+                    return
+                except Exception as e:
+                    print(f"Ошибка при отправке на модерацию: {e}")
+            else:
+                try:
+                    await message.delete()
+                    embed = discord.Embed(
+                        title="❌ Заявка удалена",
+                        description="Ваша заявка не содержит всех необходимых полей.",
+                        color=discord.Color.red()
+                    )
+                    embed.add_field(
+                        name="📝 Правильный формат:",
+                        value="🌙 Имя: <ваше имя>\n"
+                              "🎂 Возраст: <ваш возраст>\n"
+                              "💫 О себе (характер, увлечения): <описание>\n"
+                              "🌸 Кого ищу: <кого вы ищете>\n"
+                              "📜 Пожелание/послание: <ваше пожелание>",
+                        inline=False
+                    )
+                    try:
+                        await message.author.send(embed=embed)
+                    except:
+                        await message.channel.send(
+                            f"{message.author.mention}, ваша заявка удалена - не все поля заполнены!",
+                            delete_after=30
+                        )
+                    return
+                except:
+                    pass
+        
         await bot.process_commands(message)
-        return
-    
-    # Проверяем, что сообщение в канале знакомств
-    if message.channel.name == DATING_CHANNEL_NAME:
-        # Проверяем формат заявки
-        required_fields = ['🌙 Имя:', '🎂 Возраст:', '💫 О себе', '🌸 Кого ищу:', '📜 Пожелание/послание:']
-        content = message.content
-        
-        # Проверяем наличие всех полей
-        has_all_fields = True
-        missing_fields = []
-        
-        for field in required_fields:
-            if field not in content:
-                has_all_fields = False
-                missing_fields.append(field)
-        
-        # Проверяем минимальную длину
-        is_too_short = len(content.strip()) < 20
-        
-        if not has_all_fields or is_too_short:
-            # Удаляем сообщение
+    except Exception as e:
+        print(f"❌ Ошибка в on_message: {e}")
+
+# ==================== ОБРАБОТЧИК ОШИБОК ====================
+
+class ErrorHandler(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx, error):
+        try:
+            if isinstance(error, commands.CommandNotFound):
+                return
+            
+            if isinstance(error, commands.MissingPermissions):
+                await ctx.send(f"❌ У вас нет прав для этой команды!")
+                return
+            
+            if isinstance(error, commands.BadArgument):
+                await ctx.send(f"❌ Неправильный аргумент: {error}")
+                return
+            
+            error_msg = f"Ошибка в команде {ctx.command}: {error}\n{traceback.format_exc()}"
+            logging.error(error_msg)
+            
+            await ctx.send(f"❌ Произошла ошибка. Администраторы уведомлены.")
+            
+            log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                try:
+                    embed = discord.Embed(
+                        title="❌ Ошибка",
+                        description=f"```py\n{error_msg[:1900]}\n```",
+                        color=discord.Color.red()
+                    )
+                    await log_channel.send(embed=embed)
+                except:
+                    pass
+        except Exception as e:
+            print(f"❌ Ошибка в обработчике ошибок: {e}")
+
+    @commands.Cog.listener()
+    async def on_error(self, event, *args, **kwargs):
+        try:
+            error_msg = f"Ошибка в событии {event}:\n{traceback.format_exc()}"
+            logging.error(error_msg)
+            
+            log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                try:
+                    embed = discord.Embed(
+                        title="⚠️ Критическая ошибка",
+                        description=f"```py\n{error_msg[:1900]}\n```",
+                        color=discord.Color.red()
+                    )
+                    await log_channel.send(embed=embed)
+                except:
+                    pass
+        except Exception as e:
+            print(f"❌ Ошибка в обработчике ошибок: {e}")
+
+bot.add_cog(ErrorHandler(bot))
+
+# ==================== ЭМОДЗИ ====================
+
+EMOJIS = {
+    'welcome': '👋',
+    'gender': '👤',
+    'age': '🎂',
+    'games': '🎮',
+    'male': '👨',
+    'female': '👩',
+    'complete': '✅',
+    'star': '⭐',
+    'sparkles': '✨',
+    'crown': '👑',
+    'party': '🎉',
+    'heart': '💖',
+    'fire': '🔥',
+    'rainbow': '🌈',
+    'rocket': '🚀',
+    'confetti': '🎊',
+    'moon': '🌙'
+}
+
+GENDER_COLORS = {
+    'male': discord.Color.blue(),
+    'female': discord.Color.magenta()
+}
+
+AGE_COLORS = {
+    'Меньше 16 лет': discord.Color.from_rgb(255, 182, 193),
+    '16-17 лет': discord.Color.from_rgb(144, 238, 144),
+    '18-24 лет': discord.Color.from_rgb(60, 179, 113),
+    '25-29 лет': discord.Color.from_rgb(255, 165, 0),
+    '30+ лет': discord.Color.from_rgb(218, 165, 32)
+}
+
+GAME_COLORS = [
+    discord.Color.from_rgb(255, 99, 71),
+    discord.Color.from_rgb(65, 105, 225),
+    discord.Color.from_rgb(50, 205, 50),
+    discord.Color.from_rgb(255, 215, 0),
+    discord.Color.from_rgb(138, 43, 226),
+    discord.Color.from_rgb(255, 105, 180),
+    discord.Color.from_rgb(0, 206, 209),
+    discord.Color.from_rgb(220, 20, 60),
+    discord.Color.from_rgb(123, 104, 238),
+    discord.Color.from_rgb(255, 140, 0),
+    discord.Color.from_rgb(154, 205, 50),
+    discord.Color.from_rgb(186, 85, 211)
+]
+
+# ==================== ФУНКЦИЯ СОЗДАНИЯ ПРИВЕТСТВЕННОГО СООБЩЕНИЯ ====================
+
+async def create_welcome_message(channel, guild):
+    try:
+        print(f"🗑️ Очищаю канал {channel.name}...")
+        async for message in channel.history(limit=1000):
             try:
                 await message.delete()
+                await asyncio.sleep(0.3)
             except:
                 pass
-            
-            # Создаем embed с причиной удаления
-            embed = discord.Embed(
-                title="❌ Ваша заявка была удалена",
-                description="Похоже, ваша заявка не соответствует формату.",
-                color=discord.Color.red()
-            )
-            
-            if not has_all_fields:
-                missing_fields_str = '\n'.join([f'• {field}' for field in missing_fields])
-                embed.add_field(
-                    name="📋 Отсутствуют следующие поля:",
-                    value=missing_fields_str,
-                    inline=False
-                )
-            
-            if is_too_short:
-                embed.add_field(
-                    name="📝 Слишком короткая заявка",
-                    value="Пожалуйста, заполните заявку более подробно.",
-                    inline=False
-                )
-            
-            embed.add_field(
-                name="📝 Правильный формат заявки:",
-                value="🌙 Имя: <ваше имя>\n"
-                      "🎂 Возраст: <ваш возраст>\n"
-                      "💫 О себе (характер, увлечения): <описание>\n"
-                      "🌸 Кого ищу: <кого вы ищете>\n"
-                      "📜 Пожелание/послание: <ваше пожелание>",
-                inline=False
-            )
-            embed.set_footer(text="Пожалуйста, оформите заявку правильно и отправьте заново.")
-            
-            try:
-                await message.author.send(embed=embed)
-            except:
-                # Если не можем отправить в ЛС, отправляем в канал с упоминанием
-                await message.channel.send(
-                    f"{message.author.mention}, ваша заявка была удалена, так как не соответствует формату. "
-                    f"Проверьте правильность заполнения и отправьте заново.",
-                    delete_after=30
-                )
-            
-            return
+        print(f"✅ Канал {channel.name} очищен")
+    except Exception as e:
+        print(f"❌ Ошибка при очистке канала: {e}")
     
-    # Обрабатываем команды
-    await bot.process_commands(message)
+    style_name = get_welcome_style()
+    style = WELCOME_STYLES.get(style_name, WELCOME_STYLES["modern"])
+    
+    embed = discord.Embed(
+        title=style["title"],
+        description=style["description"].replace("{role}", NEWBIE_ROLE_NAME),
+        color=discord.Color.from_rgb(*style["color"])
+    )
+    
+    if guild and guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    
+    embed.set_footer(text=style["footer"])
+    
+    view = ApplyView()
+    await channel.send(embed=embed, view=view)
+    print(f"✅ Приветственное сообщение обновлено (стиль: {style['name']})")
 
 # ==================== КЛАССЫ ИНТЕРФЕЙСА ====================
 
@@ -560,8 +2385,8 @@ class ApplyView(View):
     
     @discord.ui.button(label='📝 Пройти регистрацию', style=discord.ButtonStyle.success, custom_id='apply_button')
     async def apply_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
         try:
+            await interaction.response.defer()
             member = await interaction.guild.fetch_member(interaction.user.id)
             user_data = {'member': member, 'guild': interaction.guild, 'from_registration': True}
             
@@ -605,35 +2430,43 @@ class GenderView(View):
         
     @discord.ui.button(label='Я мужчина (Воин)', style=discord.ButtonStyle.primary, emoji='👨')
     async def male_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
-        self.user_data['gender'] = 'male'
-        
-        if self.from_registration:
-            await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина (Воин)**", ephemeral=True)
-            await show_age_selection(interaction, self.user_data, self.from_registration)
-        else:
-            member = self.user_data['member']
-            await assign_gender_role(member, 'male')
-            await interaction.followup.send(f"{EMOJIS['male']} Пол обновлён: **Мужчина (Воин)**", ephemeral=True)
-            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👨 Мужчина (Воин)"])
-        
-        self.stop()
+        try:
+            await interaction.response.defer()
+            self.user_data['gender'] = 'male'
+            
+            if self.from_registration:
+                await interaction.followup.send(f"{EMOJIS['male']} Отлично! Вы выбрали: **Мужчина (Воин)**", ephemeral=True)
+                await show_age_selection(interaction, self.user_data, self.from_registration)
+            else:
+                member = self.user_data['member']
+                await assign_gender_role(member, 'male')
+                await interaction.followup.send(f"{EMOJIS['male']} Пол обновлён: **Мужчина (Воин)**", ephemeral=True)
+                await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👨 Мужчина (Воин)"])
+            
+            self.stop()
+        except Exception as e:
+            print(f"❌ Ошибка в male_button: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
         
     @discord.ui.button(label='Я женщина (Цветок)', style=discord.ButtonStyle.primary, emoji='👩')
     async def female_button(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
-        self.user_data['gender'] = 'female'
-        
-        if self.from_registration:
-            await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина (Цветок)**", ephemeral=True)
-            await show_age_selection(interaction, self.user_data, self.from_registration)
-        else:
-            member = self.user_data['member']
-            await assign_gender_role(member, 'female')
-            await interaction.followup.send(f"{EMOJIS['female']} Пол обновлён: **Женщина (Цветок)**", ephemeral=True)
-            await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👩 Женщина (Цветок)"])
-        
-        self.stop()
+        try:
+            await interaction.response.defer()
+            self.user_data['gender'] = 'female'
+            
+            if self.from_registration:
+                await interaction.followup.send(f"{EMOJIS['female']} Прекрасно! Вы выбрали: **Женщина (Цветок)**", ephemeral=True)
+                await show_age_selection(interaction, self.user_data, self.from_registration)
+            else:
+                member = self.user_data['member']
+                await assign_gender_role(member, 'female')
+                await interaction.followup.send(f"{EMOJIS['female']} Пол обновлён: **Женщина (Цветок)**", ephemeral=True)
+                await send_role_change_log(member, [f"{EMOJIS['gender']} Пол: 👩 Женщина (Цветок)"])
+            
+            self.stop()
+        except Exception as e:
+            print(f"❌ Ошибка в female_button: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
 
 class AgeView(View):
     def __init__(self, user_data, from_registration=True):
@@ -660,20 +2493,24 @@ class AgeView(View):
     
     def create_age_callback(self, age):
         async def callback(interaction: discord.Interaction):
-            await interaction.response.defer()
-            clean_age = age.replace('🍼 ', '').replace('🌱 ', '').replace('🌿 ', '').replace('🌳 ', '').replace('🍂 ', '')
-            self.user_data['age'] = clean_age
-            
-            if self.from_registration:
-                await interaction.followup.send(f"{EMOJIS['age']} Принято! Ваш возраст: **{clean_age}**", ephemeral=True)
-                await show_games_selection(interaction, self.user_data, self.from_registration)
-            else:
-                member = self.user_data['member']
-                await assign_age_role(member, clean_age)
-                await interaction.followup.send(f"{EMOJIS['age']} Возраст обновлён: **{clean_age}**", ephemeral=True)
-                await send_role_change_log(member, [f"{EMOJIS['age']} Возраст: {clean_age}"])
-            
-            self.stop()
+            try:
+                await interaction.response.defer()
+                clean_age = age.replace('🍼 ', '').replace('🌱 ', '').replace('🌿 ', '').replace('🌳 ', '').replace('🍂 ', '')
+                self.user_data['age'] = clean_age
+                
+                if self.from_registration:
+                    await interaction.followup.send(f"{EMOJIS['age']} Принято! Ваш возраст: **{clean_age}**", ephemeral=True)
+                    await show_games_selection(interaction, self.user_data, self.from_registration)
+                else:
+                    member = self.user_data['member']
+                    await assign_age_role(member, clean_age)
+                    await interaction.followup.send(f"{EMOJIS['age']} Возраст обновлён: **{clean_age}**", ephemeral=True)
+                    await send_role_change_log(member, [f"{EMOJIS['age']} Возраст: {clean_age}"])
+                
+                self.stop()
+            except Exception as e:
+                print(f"❌ Ошибка в age_callback: {e}")
+                await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
         return callback
 
 class GamesSelect(Select):
@@ -704,15 +2541,19 @@ class GamesSelect(Select):
         )
     
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        self.user_data['games'] = self.values
-        
-        if self.from_registration:
-            await complete_registration(interaction, self.user_data)
-        else:
-            await update_roles_only(interaction, self.user_data)
-        
-        self.view.stop()
+        try:
+            await interaction.response.defer()
+            self.user_data['games'] = self.values
+            
+            if self.from_registration:
+                await complete_registration(interaction, self.user_data)
+            else:
+                await update_roles_only(interaction, self.user_data)
+            
+            self.view.stop()
+        except Exception as e:
+            print(f"❌ Ошибка в games callback: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
 
 class GamesView(View):
     def __init__(self, user_data, from_registration=True):
@@ -727,8 +2568,8 @@ class ChangeGamesView(View):
     
     @discord.ui.button(label='🎮 Сменить игры', style=discord.ButtonStyle.primary, custom_id='change_games')
     async def change_games(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
         try:
+            await interaction.response.defer()
             member = await interaction.guild.fetch_member(interaction.user.id)
             user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
@@ -745,23 +2586,26 @@ class ChangeGamesView(View):
             
         except discord.Forbidden:
             await interaction.followup.send("❌ Откройте личные сообщения!", ephemeral=True)
+        except Exception as e:
+            print(f"❌ Ошибка в change_games: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
     
     @discord.ui.button(label='👤 Указать пол (если нет)', style=discord.ButtonStyle.secondary, custom_id='add_gender')
     async def add_gender(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
-        member = await interaction.guild.fetch_member(interaction.user.id)
-        
-        has_gender = False
-        for role in member.roles:
-            if role.name.lower() in ['воин', 'цветок', 'мужчина', 'женщина', 'м', 'ж', 'male', 'female', 'man', 'woman', 'парень', 'девушка', 'тянка', 'тян']:
-                has_gender = True
-                break
-        
-        if has_gender:
-            await interaction.followup.send("❌ У вас уже указан пол. Обратитесь к администратору для смены.", ephemeral=True)
-            return
-        
         try:
+            await interaction.response.defer()
+            member = await interaction.guild.fetch_member(interaction.user.id)
+            
+            has_gender = False
+            for role in member.roles:
+                if role.name.lower() in ['воин', 'цветок', 'мужчина', 'женщина', 'м', 'ж', 'male', 'female', 'man', 'woman', 'парень', 'девушка']:
+                    has_gender = True
+                    break
+            
+            if has_gender:
+                await interaction.followup.send("❌ У вас уже указан пол. Обратитесь к администратору для смены.", ephemeral=True)
+                return
+            
             user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
             embed = discord.Embed(
@@ -779,23 +2623,26 @@ class ChangeGamesView(View):
             
         except discord.Forbidden:
             await interaction.followup.send("❌ Откройте личные сообщения!", ephemeral=True)
+        except Exception as e:
+            print(f"❌ Ошибка в add_gender: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
     
     @discord.ui.button(label='🎂 Указать возраст (если нет)', style=discord.ButtonStyle.secondary, custom_id='add_age')
     async def add_age(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.defer()
-        member = await interaction.guild.fetch_member(interaction.user.id)
-        
-        has_age = False
-        for age_key in AGE_COLORS.keys():
-            if discord.utils.get(member.roles, name=age_key):
-                has_age = True
-                break
-        
-        if has_age:
-            await interaction.followup.send("❌ У вас уже указан возраст. Обратитесь к администратору для смены.", ephemeral=True)
-            return
-        
         try:
+            await interaction.response.defer()
+            member = await interaction.guild.fetch_member(interaction.user.id)
+            
+            has_age = False
+            for age_key in AGE_COLORS.keys():
+                if discord.utils.get(member.roles, name=age_key):
+                    has_age = True
+                    break
+            
+            if has_age:
+                await interaction.followup.send("❌ У вас уже указан возраст. Обратитесь к администратору для смены.", ephemeral=True)
+                return
+            
             user_data = {'member': member, 'guild': interaction.guild, 'from_registration': False}
             
             embed = discord.Embed(
@@ -811,1266 +2658,711 @@ class ChangeGamesView(View):
             
         except discord.Forbidden:
             await interaction.followup.send("❌ Откройте личные сообщения!", ephemeral=True)
+        except Exception as e:
+            print(f"❌ Ошибка в add_age: {e}")
+            await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
 
 # ==================== ФУНКЦИИ ПОКАЗА ВОПРОСОВ ====================
 
 async def show_age_selection(interaction: discord.Interaction, user_data, from_registration=True):
-    embed = discord.Embed(
-        title=f"{EMOJIS['age']} Вопрос 2 из 3: Выберите ваш возраст",
-        description=f"{EMOJIS['star']} К какой возрастной категории вы относитесь?",
-        color=discord.Color.green()
-    )
-    embed.set_footer(text="Выберите один из вариантов ниже")
-    
-    view = AgeView(user_data, from_registration)
-    await interaction.user.send(embed=embed, view=view)
+    try:
+        embed = discord.Embed(
+            title=f"{EMOJIS['age']} Вопрос 2 из 3: Выберите ваш возраст",
+            description=f"{EMOJIS['star']} К какой возрастной категории вы относитесь?",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Выберите один из вариантов ниже")
+        
+        view = AgeView(user_data, from_registration)
+        await interaction.user.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"❌ Ошибка в show_age_selection: {e}")
 
 async def show_games_selection(interaction: discord.Interaction, user_data, from_registration=True):
-    embed = discord.Embed(
-        title=f"{EMOJIS['games']} Вопрос 3 из 3: Выберите ваши любимые игры",
-        description=f"{EMOJIS['sparkles']} Во что вы любите играть?\nВы можете выбрать несколько вариантов!",
-        color=discord.Color.purple()
-    )
-    embed.set_footer(text="Выберите одну или несколько игр из списка")
-    
-    view = GamesView(user_data, from_registration)
-    await interaction.user.send(embed=embed, view=view)
+    try:
+        embed = discord.Embed(
+            title=f"{EMOJIS['games']} Вопрос 3 из 3: Выберите ваши любимые игры",
+            description=f"{EMOJIS['sparkles']} Во что вы любите играть?\nВы можете выбрать несколько вариантов!",
+            color=discord.Color.purple()
+        )
+        embed.set_footer(text="Выберите одну или несколько игр из списка")
+        
+        view = GamesView(user_data, from_registration)
+        await interaction.user.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"❌ Ошибка в show_games_selection: {e}")
 
 # ==================== ЗАВЕРШЕНИЕ РЕГИСТРАЦИИ ====================
 
 async def complete_registration(interaction: discord.Interaction, user_data):
-    """Финализирует регистрацию и выдаёт роли"""
-    member = user_data['member']
-    from_registration = user_data.get('from_registration', True)
-    
-    complete_embed = discord.Embed(
-        title=f"{EMOJIS['complete']} Регистрация завершена!",
-        description=f"{EMOJIS['party']} Поздравляем, {member.name}!",
-        color=discord.Color.teal()
-    )
-    
-    if user_data.get('gender') == 'male':
-        gender_display = "👨 Мужчина (Воин)"
-    elif user_data.get('gender') == 'female':
-        gender_display = "👩 Женщина (Цветок)"
-    else:
-        gender_display = "❓ Не указан"
-    
-    age_value = user_data.get('age', '❓ Не указан')
-    
-    games = user_data.get('games', [])
-    if games:
-        games_display = '\n'.join([f'{EMOJIS["star"]} {game}' for game in games])
-    else:
-        games_display = "❓ Не выбраны"
-    
-    complete_embed.add_field(name=f"{EMOJIS['gender']} Пол", value=gender_display, inline=True)
-    complete_embed.add_field(name=f"{EMOJIS['age']} Возраст", value=age_value, inline=True)
-    complete_embed.add_field(name=f"{EMOJIS['games']} Игры", value=games_display, inline=False)
-    complete_embed.set_thumbnail(url=member.display_avatar.url)
-    
-    await interaction.user.send(embed=complete_embed)
-    
-    print(f"\n📋 Назначение ролей для {member.name}:")
-    
-    gender_role = None
-    if user_data.get('gender'):
-        gender_role = await assign_gender_role(member, user_data['gender'])
-    
-    age_role = None
-    if user_data.get('age'):
-        age_role = await assign_age_role(member, user_data['age'])
-    
-    game_roles = []
-    if user_data.get('games'):
-        game_roles = await assign_game_roles(member, user_data['games'])
-    
-    await remove_newbie_role(member)
-    await assign_main_role(member)
-    
-    await asyncio.sleep(1)
-    
-    if from_registration:
-        final_embed = discord.Embed(
-            title=f"{EMOJIS['crown']} Добро пожаловать в семью!",
-            description=f"{EMOJIS['rainbow']} {member.mention}, теперь ты полноценный участник сервера!\n\n"
-                       f"{EMOJIS['heart']} Вот твои роли:",
-            color=discord.Color.gold()
+    try:
+        member = user_data['member']
+        from_registration = user_data.get('from_registration', True)
+        
+        complete_embed = discord.Embed(
+            title=f"{EMOJIS['complete']} Регистрация завершена!",
+            description=f"{EMOJIS['party']} Поздравляем, {member.name}!",
+            color=discord.Color.teal()
         )
         
-        roles_list = []
-        if gender_role:
-            roles_list.append(f"{EMOJIS['gender']} {gender_role.mention}")
-        if age_role:
-            roles_list.append(f"{EMOJIS['age']} {age_role.mention}")
-        if game_roles:
-            game_mentions = ' '.join([r.mention for r in game_roles])
-            roles_list.append(f"{EMOJIS['games']} {game_mentions}")
-        
-        if roles_list:
-            final_embed.add_field(name="📋 Назначенные роли", value='\n'.join(roles_list), inline=False)
+        if user_data.get('gender') == 'male':
+            gender_display = "👨 Мужчина (Воин)"
+        elif user_data.get('gender') == 'female':
+            gender_display = "👩 Женщина (Цветок)"
         else:
-            final_embed.add_field(name="📋 Назначенные роли", value="❌ Роли не были назначены", inline=False)
+            gender_display = "❓ Не указан"
         
-        final_embed.add_field(name=f"{EMOJIS['fire']} Начни общение!", 
-                             value="Заходи в голосовые каналы и текстовые чаты!\nРасскажи о себе в общем чате.",
-                             inline=False)
-        final_embed.set_footer(text=f"{EMOJIS['confetti']} Мы рады, что ты с нами!")
+        age_value = user_data.get('age', '❓ Не указан')
         
-        await interaction.user.send(embed=final_embed)
-        await send_registration_log(member)
+        games = user_data.get('games', [])
+        if games:
+            games_display = '\n'.join([f'{EMOJIS["star"]} {game}' for game in games])
+        else:
+            games_display = "❓ Не выбраны"
+        
+        complete_embed.add_field(name=f"{EMOJIS['gender']} Пол", value=gender_display, inline=True)
+        complete_embed.add_field(name=f"{EMOJIS['age']} Возраст", value=age_value, inline=True)
+        complete_embed.add_field(name=f"{EMOJIS['games']} Игры", value=games_display, inline=False)
+        complete_embed.set_thumbnail(url=member.display_avatar.url)
+        
+        await interaction.user.send(embed=complete_embed)
+        
+        print(f"\n📋 Назначение ролей для {member.name}:")
+        
+        gender_role = None
+        if user_data.get('gender'):
+            gender_role = await assign_gender_role(member, user_data['gender'])
+        
+        age_role = None
+        if user_data.get('age'):
+            age_role = await assign_age_role(member, user_data['age'])
+        
+        game_roles = []
+        if user_data.get('games'):
+            game_roles = await assign_game_roles(member, user_data['games'])
+        
+        await remove_newbie_role(member)
+        await assign_main_role(member)
+        
+        await asyncio.sleep(1)
+        
+        if from_registration:
+            final_embed = discord.Embed(
+                title=f"{EMOJIS['crown']} Добро пожаловать в семью!",
+                description=f"{EMOJIS['rainbow']} {member.mention}, теперь ты полноценный участник сервера!\n\n"
+                           f"{EMOJIS['heart']} Вот твои роли:",
+                color=discord.Color.gold()
+            )
+            
+            roles_list = []
+            if gender_role:
+                roles_list.append(f"{EMOJIS['gender']} {gender_role.mention}")
+            if age_role:
+                roles_list.append(f"{EMOJIS['age']} {age_role.mention}")
+            if game_roles:
+                game_mentions = ' '.join([r.mention for r in game_roles])
+                roles_list.append(f"{EMOJIS['games']} {game_mentions}")
+            
+            if roles_list:
+                final_embed.add_field(name="📋 Назначенные роли", value='\n'.join(roles_list), inline=False)
+            else:
+                final_embed.add_field(name="📋 Назначенные роли", value="❌ Роли не были назначены", inline=False)
+            
+            final_embed.add_field(name=f"{EMOJIS['fire']} Начни общение!", 
+                                 value="Заходи в голосовые каналы и текстовые чаты!\nРасскажи о себе в общем чате.",
+                                 inline=False)
+            final_embed.set_footer(text=f"{EMOJIS['confetti']} Мы рады, что ты с нами!")
+            
+            await interaction.user.send(embed=final_embed)
+            await send_registration_log(member)
+    except Exception as e:
+        print(f"❌ Ошибка в complete_registration: {e}")
 
 async def update_roles_only(interaction: discord.Interaction, user_data):
-    """Только обновляет роли, без уведомлений о регистрации"""
-    member = user_data['member']
-    changes = []
-    
-    if user_data.get('gender'):
-        await assign_gender_role(member, user_data['gender'])
-        gender_display = "👨 Мужчина (Воин)" if user_data['gender'] == 'male' else "👩 Женщина (Цветок)"
-        changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
-    
-    if user_data.get('age'):
-        await assign_age_role(member, user_data['age'])
-        changes.append(f"{EMOJIS['age']} Возраст: {user_data['age']}")
-    
-    if user_data.get('games'):
-        await assign_game_roles(member, user_data['games'])
-        changes.append(f"{EMOJIS['games']} Игры: {', '.join(user_data['games'])}")
-    
-    await interaction.user.send("✅ Ваши роли успешно обновлены!")
-    
-    if changes:
-        await send_role_change_log(member, changes)
+    try:
+        member = user_data['member']
+        changes = []
+        
+        if user_data.get('gender'):
+            await assign_gender_role(member, user_data['gender'])
+            gender_display = "👨 Мужчина (Воин)" if user_data['gender'] == 'male' else "👩 Женщина (Цветок)"
+            changes.append(f"{EMOJIS['gender']} Пол: {gender_display}")
+        
+        if user_data.get('age'):
+            await assign_age_role(member, user_data['age'])
+            changes.append(f"{EMOJIS['age']} Возраст: {user_data['age']}")
+        
+        if user_data.get('games'):
+            await assign_game_roles(member, user_data['games'])
+            changes.append(f"{EMOJIS['games']} Игры: {', '.join(user_data['games'])}")
+        
+        await interaction.user.send("✅ Ваши роли успешно обновлены!")
+        
+        if changes:
+            await send_role_change_log(member, changes)
+    except Exception as e:
+        print(f"❌ Ошибка в update_roles_only: {e}")
 
-# ==================== ОПРОСЫ И ГОЛОСОВАНИЯ ====================
+# ==================== КОМАНДЫ БОТА ====================
 
-import re
-
-# Глобальная переменная для отслеживания активного опроса
-active_poll = None
-
-class CreatePollModal(discord.ui.Modal):
-    def __init__(self, creator_id, ctx, original_message=None, command_message=None):
-        super().__init__(title="📊 Создание опроса")
-        self.creator_id = creator_id
-        self.ctx = ctx
-        self.original_message = original_message
-        self.command_message = command_message
-        
-        self.question1 = discord.ui.TextInput(
-            label="Шаг 1: Название опроса",
-            placeholder="Введите название первого опроса...",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=200
-        )
-        self.add_item(self.question1)
-        
-        self.time_reminder1 = discord.ui.TextInput(
-            label="Шаг 2: Время/Напоминание для опроса",
-            placeholder="Время (минуты) / Напоминание (часы). Пример: 60 / 1",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=20
-        )
-        self.add_item(self.time_reminder1)
-        
-        self.question2 = discord.ui.TextInput(
-            label="Шаг 3: Название голосования",
-            placeholder="Введите название для голосования...",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=200
-        )
-        self.add_item(self.question2)
-        
-        self.time_reminder2 = discord.ui.TextInput(
-            label="Шаг 4: Время/Напоминание для голосования",
-            placeholder="Время (минуты) / Напоминание (часы). Пример: 60 / 1",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=20
-        )
-        self.add_item(self.time_reminder2)
-        
-        self.enable_pin_function = discord.ui.TextInput(
-            label="Шаг 5: Включить вар-ты (да/нет)",
-            placeholder="Введите 'да' или 'нет'",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=10
-        )
-        self.add_item(self.enable_pin_function)
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        global active_poll
-        
-        try:
-            # Проверяем, что это тот же пользователь
-            if interaction.user.id != self.creator_id:
-                await interaction.response.send_message("❌ Вы не создавали этот опрос!", ephemeral=True)
-                return
-            
-            # Получаем данные
-            question1 = self.question1.value
-            
-            # Парсим время и напоминание для опроса
-            try:
-                time1, reminder1 = self.parse_time_reminder(self.time_reminder1.value)
-            except ValueError as e:
-                await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
-                return
-            
-            question2 = self.question2.value
-            
-            # Парсим время и напоминание для голосования
-            try:
-                time2, reminder2 = self.parse_time_reminder(self.time_reminder2.value)
-            except ValueError as e:
-                await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
-                return
-            
-            # Проверяем ответ на 5 шаге
-            enable_pin = self.enable_pin_function.value.lower().strip()
-            if enable_pin not in ["да", "нет", "yes", "no"]:
-                await interaction.response.send_message("❌ Введите 'да' или 'нет'!", ephemeral=True)
-                return
-            
-            is_pin_enabled = enable_pin in ["да", "yes"]
-            
-            # Удаляем сообщение с кнопкой
-            if self.original_message:
-                try:
-                    await self.original_message.delete()
-                except (discord.NotFound, discord.Forbidden):
-                    pass
-            
-            # Удаляем сообщение отправителя команды
-            if self.command_message:
-                try:
-                    await self.command_message.delete()
-                except (discord.NotFound, discord.Forbidden):
-                    pass
-            
-            # Устанавливаем флаг активного опроса
-            active_poll = True
-            
-            await interaction.response.send_message(
-                f"✅ **Опрос создается!**\n\n"
-                f"**Первый опрос:** {question1}\n"
-                f"**Время:** {time1} минут\n"
-                f"**Напоминание через:** {reminder1} час(ов)\n\n"
-                f"**Второй опрос (голосование):** {question2}\n"
-                f"**Время:** {time2} минут\n"
-                f"**Напоминание через:** {reminder2} час(ов)\n\n"
-                f"**Варианты ответов (временная/постоянная):** {'Включены' if is_pin_enabled else 'Выключены'}",
-                ephemeral=True
-            )
-            
-            # Создаем первый опрос
-            poll_view = PollView(question1, time1, reminder1, interaction, self.creator_id, self.ctx, is_pin_enabled)
-            
-            embed = discord.Embed(
-                title=f"📊 Опрос: {question1}",
-                description="Нажмите кнопку ниже, чтобы оставить свой ответ!",
-                color=discord.Color.blue()
-            )
-            embed.set_footer(text=f"Опрос активен {time1} минут | Создатель может завершить досрочно")
-            
-            message = await interaction.channel.send(embed=embed, view=poll_view)
-            poll_view.message = message
-            
-            # Закрепляем сообщение
-            try:
-                await message.pin()
-            except discord.Forbidden:
-                pass
-            
-            # Запускаем задачу напоминания
-            reminder_task1 = asyncio.create_task(poll_view.send_reminder(reminder1, "опрос"))
-            
-            # Ждем указанное время или досрочного завершения
-            start_time = asyncio.get_event_loop().time()
-            while poll_view.is_active and not poll_view.is_aborted:
-                await asyncio.sleep(5)
-                if asyncio.get_event_loop().time() - start_time >= time1 * 60:
-                    break
-            
-            # Отменяем задачу напоминания
-            reminder_task1.cancel()
-            
-            # Проверяем, был ли опрос прерван
-            if poll_view.is_aborted:
-                await interaction.channel.send("⛔ **Опрос был прерван создателем!**")
-                active_poll = False
-                return
-            
-            # Завершаем опрос и получаем ответы
-            responses = await poll_view.finish_poll()
-            
-            # Открепляем сообщение с опросом
-            try:
-                await message.unpin()
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            
-            if not responses:
-                await interaction.channel.send("❌ Нет ответов для создания голосования.")
-                active_poll = False
-                return
-            
-            # Создаем голосование
-            await interaction.channel.send(
-                f"🗳️ **Голосование создано!**\n\n"
-                f"На основе {len(responses)} ответов создано голосование.\n"
-                f"Вопрос: **{question2}**\n"
-                f"Время голосования: **{time2}** минут.\n"
-                f"Напоминание через: **{reminder2}** час(ов)."
-            )
-            
-            vote_view = VoteView(question2, responses, time2, interaction, self.creator_id, self.ctx, is_pin_enabled)
-            
-            embed = discord.Embed(
-                title=f"🗳️ Голосование: {question2}",
-                description="Нажмите на кнопку с вашим вариантом, чтобы проголосовать!",
-                color=discord.Color.purple()
-            )
-            embed.set_footer(text=f"Голосование активно {time2} минут | Создатель может завершить досрочно")
-            
-            vote_message = await interaction.channel.send(embed=embed, view=vote_view)
-            vote_view.message = vote_message
-            
-            # Закрепляем сообщение с голосованием
-            try:
-                await vote_message.pin()
-            except discord.Forbidden:
-                pass
-            
-            # Запускаем задачу напоминания для голосования
-            reminder_task2 = asyncio.create_task(vote_view.send_reminder(reminder2, "голосование"))
-            
-            # Ждем указанное время для голосования
-            start_time = asyncio.get_event_loop().time()
-            while vote_view.is_active and not vote_view.is_aborted:
-                await asyncio.sleep(5)
-                if asyncio.get_event_loop().time() - start_time >= time2 * 60:
-                    break
-            
-            # Отменяем задачу напоминания
-            reminder_task2.cancel()
-            
-            # Проверяем, было ли голосование прервано
-            if vote_view.is_aborted:
-                await interaction.channel.send("⛔ **Голосование было прервано создателем!**")
-                active_poll = False
-                return
-            
-            # Завершаем голосование и получаем результаты
-            final_results = await vote_view.finish_vote()
-            
-            # Открепляем сообщение с голосованием
-            try:
-                await vote_message.unpin()
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            
-            # Закрепляем финальные результаты
-            if final_results:
-                final_message = await interaction.channel.send(embed=final_results)
-                try:
-                    await final_message.pin()
-                except discord.Forbidden:
-                    pass
-            
-            active_poll = False
-            
-        except Exception as e:
-            # Логируем ошибку, но не показываем пользователю
-            print(f"Ошибка в создании опроса: {e}")
-            active_poll = False
-    
-    def parse_time_reminder(self, value):
-        """Парсит строку вида 'время / напоминание'"""
-        try:
-            # Проверяем, есть ли разделитель
-            if '/' in value:
-                parts = value.split('/')
-                time_str = parts[0].strip()
-                reminder_str = parts[1].strip()
-            else:
-                # Если нет разделителя, пытаемся распарсить как одно число (время)
-                time_str = value.strip()
-                reminder_str = "1"  # По умолчанию 1 час
-            
-            time_val = int(time_str)
-            reminder_val = int(reminder_str)
-            
-            if time_val <= 0:
-                raise ValueError("Время должно быть больше 0!")
-            
-            if reminder_val < 1:
-                raise ValueError("Напоминание должно быть минимум 1 час!")
-            
-            if reminder_val * 60 > time_val:
-                raise ValueError(f"Время напоминания ({reminder_val} час = {reminder_val*60} мин) не может быть больше времени опроса/голосования ({time_val} мин)!")
-            
-            return time_val, reminder_val
-            
-        except ValueError as e:
-            if str(e).startswith("invalid literal"):
-                raise ValueError("Введите корректные числа! Формат: время (минуты) / напоминание (часы). Пример: 60 / 1")
-            raise e
-
-class PollView(View):
-    def __init__(self, question, timeout_minutes, reminder_hours, ctx, creator_id, original_ctx, is_pin_enabled):
-        super().__init__(timeout=None)
-        self.question = question
-        self.responses = {}
-        self.timeout_minutes = timeout_minutes
-        self.reminder_hours = reminder_hours
-        self.is_active = True
-        self.is_aborted = False
-        self.message = None
-        self.ctx = ctx
-        self.creator_id = creator_id
-        self.original_ctx = original_ctx
-        self.is_pin_enabled = is_pin_enabled
-        self.user_pin_choices = {}
-        
-        # Создаем кнопки
-        self.participate_button = Button(label='✅ Участвовать', style=discord.ButtonStyle.success, custom_id='participate')
-        self.participate_button.callback = self.participate_callback
-        self.add_item(self.participate_button)
-        
-        if is_pin_enabled:
-            permanent_button = Button(label='📌 Постоянная', style=discord.ButtonStyle.secondary, custom_id='permanent_pin')
-            permanent_button.callback = self.create_pin_callback('Постоянная')
-            self.add_item(permanent_button)
-            
-            temporary_button = Button(label='📌 Временная', style=discord.ButtonStyle.secondary, custom_id='temporary_pin')
-            temporary_button.callback = self.create_pin_callback('Временная')
-            self.add_item(temporary_button)
-        
-        finish_button = Button(label='⏹️ Завершить досрочно', style=discord.ButtonStyle.danger, custom_id='finish_early')
-        finish_button.callback = self.finish_early_callback
-        self.add_item(finish_button)
-        
-        abort_button = Button(label='🚫 Прервать', style=discord.ButtonStyle.danger, custom_id='abort_poll')
-        abort_button.callback = self.abort_poll_callback
-        self.add_item(abort_button)
-    
-    async def send_reminder(self, reminder_hours, stage):
-        """Отправляет напоминание через указанное количество часов"""
-        try:
-            await asyncio.sleep(reminder_hours * 3600)
-            
-            if self.is_active and not self.is_aborted:
-                try:
-                    embed = discord.Embed(
-                        title="⏰ Напоминание!",
-                        description=f"**{stage.capitalize()}** еще активен!\n"
-                                   f"Вопрос: **{self.question}**\n"
-                                   f"Осталось времени: **{self.timeout_minutes}** минут\n\n"
-                                   f"Не забудьте оставить свой ответ!",
-                        color=discord.Color.gold()
-                    )
-                    await self.ctx.followup.send(embed=embed)
-                except (discord.NotFound, discord.Forbidden):
-                    # Канал или сообщение удалены
-                    pass
-        except asyncio.CancelledError:
-            # Задача отменена - просто выходим
-            pass
-    
-    async def participate_callback(self, interaction: discord.Interaction):
-        if not self.is_active:
-            await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
-            return
-            
-        modal = PollResponseModal(self, interaction.user.id)
-        await interaction.response.send_modal(modal)
-    
-    def create_pin_callback(self, pin_type):
-        async def callback(interaction: discord.Interaction):
-            if not self.is_active:
-                await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
-                return
-            
-            self.user_pin_choices[interaction.user.id] = pin_type
-            
-            if interaction.user.id in self.responses:
-                response_text = self.responses[interaction.user.id]["text"]
-                await self.update_user_response(interaction.user.id, response_text, pin_type)
-            
-            await interaction.response.send_message(f"✅ Вы выбрали **{pin_type}** закрепление!", ephemeral=True)
-        return callback
-    
-    async def finish_early_callback(self, interaction: discord.Interaction):
-        is_creator = interaction.user.id == self.creator_id
-        is_admin = interaction.user.guild_permissions.administrator
-        
-        if not (is_creator or is_admin):
-            await interaction.response.send_message("❌ Только создатель опроса или администратор может завершить его досрочно!", ephemeral=True)
+@bot.command(name='update_roles')
+async def update_roles(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
             return
         
-        await interaction.response.defer()
-        await self.force_finish()
-        await interaction.followup.send("✅ Опрос досрочно завершен!", ephemeral=True)
-    
-    async def abort_poll_callback(self, interaction: discord.Interaction):
-        is_creator = interaction.user.id == self.creator_id
-        is_admin = interaction.user.guild_permissions.administrator
+        member = ctx.author
         
-        if not (is_creator or is_admin):
-            await interaction.response.send_message("❌ Только создатель опроса или администратор может прервать опрос!", ephemeral=True)
+        has_newbie = False
+        for role in member.roles:
+            if role.name == NEWBIE_ROLE_NAME:
+                has_newbie = True
+                break
+        
+        if has_newbie:
+            await ctx.send("❌ Вы не можете менять роли, пока не пройдете регистрацию!")
             return
-        
-        self.is_aborted = True
-        self.is_active = False
         
         embed = discord.Embed(
-            title="⛔ Опрос прерван",
-            description=f"**Вопрос:** {self.question}\n\nОпрос был прерван создателем!",
-            color=discord.Color.red()
+            title=f"{EMOJIS['sparkles']} Изменение ролей",
+            description=f"{EMOJIS['star']} {ctx.author.mention}, вы можете изменить свои роли!\n\n"
+                       f"📌 **Что можно изменить:**\n"
+                       f"• 🎮 **Игры** - выберите свои любимые игры\n"
+                       f"• 👤 **Пол** - укажите, если не указан\n"
+                       f"• 🎂 **Возраст** - укажите, если не указан\n\n"
+                       f"⚠️ **Важно:** Некоторые роли можно изменить только через администратора.",
+            color=discord.Color.blue()
         )
-        await self.message.edit(embed=embed, view=None)
         
-        await interaction.response.send_message("✅ Опрос успешно прерван!", ephemeral=True)
-    
-    async def add_response(self, user_id, response_text):
-        pin_type = self.user_pin_choices.get(user_id)
-        self.responses[user_id] = {"text": response_text, "pin_type": pin_type}
-        await self.update_message()
-        await self.update_participate_button(user_id)
-    
-    async def update_user_response(self, user_id, response_text, pin_type):
-        if user_id in self.responses:
-            self.responses[user_id] = {"text": response_text, "pin_type": pin_type}
-            await self.update_message()
-    
-    async def update_participate_button(self, user_id):
-        if user_id in self.responses:
-            self.participate_button.label = '✏️ Редактировать'
-            if self.message:
-                try:
-                    await self.message.edit(view=self)
-                except (discord.NotFound, discord.Forbidden):
-                    pass
-    
-    async def update_message(self):
-        if self.message and not self.is_aborted:
-            try:
-                embed = discord.Embed(
-                    title=f"📊 Опрос: {self.question}",
-                    description=f"Участников: {len(self.responses)}\n\nНажмите кнопку ниже, чтобы ответить!",
-                    color=discord.Color.blue()
-                )
-                embed.set_footer(text=f"Опрос активен {self.timeout_minutes} минут")
-                
-                if self.responses:
-                    pin_responses = []
-                    other_responses = []
-                    
-                    for uid, data in self.responses.items():
-                        if data["pin_type"]:
-                            pin_responses.append((uid, data))
-                        else:
-                            other_responses.append((uid, data))
-                    
-                    all_responses = pin_responses + other_responses
-                    last_responses = all_responses[-5:]
-                    responses_text = "\n".join([f"<@{uid}>: {data['text']}" + (f" ({data['pin_type']})" if data['pin_type'] else "") for uid, data in last_responses])
-                    if len(all_responses) > 5:
-                        responses_text += f"\n... и еще {len(all_responses) - 5} ответов"
-                    embed.add_field(name="📝 Последние ответы", value=responses_text, inline=False)
-                
-                await self.message.edit(embed=embed, view=self)
-            except (discord.NotFound, discord.Forbidden):
-                # Сообщение удалено или нет прав
-                pass
-    
-    async def force_finish(self):
-        self.is_active = False
-        return await self.finish_poll()
-    
-    async def finish_poll(self):
-        global active_poll
-        self.is_active = False
+        view = ChangeGamesView()
+        await ctx.send(embed=embed, view=view)
         
-        if self.is_aborted:
-            return []
+    except Exception as e:
+        print(f"❌ Ошибка в update_roles: {e}")
+        await ctx.send(f"❌ Ошибка: {e}")
+
+@bot.command(name='list_chats')
+async def list_chats(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
         
-        if not self.responses:
-            embed = discord.Embed(
-                title="❌ Опрос завершен",
-                description=f"Вопрос: {self.question}\n\nНикто не ответил!",
-                color=discord.Color.red()
-            )
-            await self.message.edit(embed=embed, view=None)
-            active_poll = False
-            return []
+        user_chats = ChatManager.get_active_chats_for_user(ctx.author.id)
         
-        all_responses = []
-        for user_id, data in self.responses.items():
-            response_text = data['text']
-            if data['pin_type']:
-                response_text = f"{response_text} - {data['pin_type']}"
-            all_responses.append(f"<@{user_id}>: {response_text}")
+        if not user_chats:
+            await ctx.send("📭 У вас нет активных диалогов.", ephemeral=True)
+            return
         
         embed = discord.Embed(
-            title="📊 Результаты опроса",
-            description=f"**Вопрос:** {self.question}\n\n**Все ответы ({len(self.responses)} участников):**\n" + "\n".join(all_responses),
-            color=discord.Color.green()
+            title="💬 Ваши активные диалоги",
+            description=f"Всего диалогов: {len(user_chats)}",
+            color=discord.Color.blue()
         )
         
-        unique_responses = self.get_unique_responses(list(self.responses.values()))
-        
-        await self.message.edit(embed=embed, view=None)
-        active_poll = False
-        return unique_responses
-    
-    def get_unique_responses(self, responses):
-        unique = []
-        for response_data in responses:
-            response = response_data['text']
-            normalized = re.sub(r'\s+', ' ', response.strip().lower())
+        for i, (chat_id, chat) in enumerate(user_chats[:10], 1):
+            other_user_id = chat.get("from_user_id") if str(chat.get("to_user_id")) == str(ctx.author.id) else chat.get("to_user_id")
             
-            is_duplicate = False
-            for existing in unique:
-                existing_normalized = re.sub(r'\s+', ' ', existing.strip().lower())
-                if existing_normalized == normalized:
-                    is_duplicate = True
-                    break
-            
-            if not is_duplicate:
-                unique.append(response)
-        
-        return unique
-
-class PollResponseModal(discord.ui.Modal):
-    def __init__(self, poll_view, user_id):
-        super().__init__(title="Ваш ответ")
-        self.poll_view = poll_view
-        self.user_id = user_id
-        
-        existing_response = ""
-        if user_id in poll_view.responses:
-            existing_response = poll_view.responses[user_id]["text"]
-        
-        self.response_input = discord.ui.TextInput(
-            label="Введите ваш ответ",
-            placeholder="Напишите ваш вариант ответа...",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            max_length=500,
-            default=existing_response
-        )
-        self.add_item(self.response_input)
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            if not self.poll_view.is_active:
-                await interaction.response.send_message("❌ Этот опрос уже завершен!", ephemeral=True)
-                return
-            
-            if self.poll_view.is_aborted:
-                await interaction.response.send_message("❌ Этот опрос был прерван!", ephemeral=True)
-                return
-            
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("❌ Вы не можете редактировать чужой ответ!", ephemeral=True)
-                return
-            
-            response = self.response_input.value
-            normalized_response = re.sub(r'\s+', ' ', response.strip().lower())
-            
-            for uid, data in self.poll_view.responses.items():
-                if uid == self.user_id:
-                    continue
-                existing_normalized = re.sub(r'\s+', ' ', data['text'].strip().lower())
-                if existing_normalized == normalized_response:
-                    await interaction.response.send_message(
-                        "❌ Такой ответ уже был предложен! Пожалуйста, предложите другой вариант.",
-                        ephemeral=True
-                    )
-                    return
-            
-            pin_type = self.poll_view.user_pin_choices.get(self.user_id)
-            
-            if self.user_id in self.poll_view.responses:
-                # Обновляем существующий ответ
-                self.poll_view.responses[self.user_id]["text"] = response
-                # Обновляем сообщение
-                await self.poll_view.update_message()
-            else:
-                # Добавляем новый ответ
-                await self.poll_view.add_response(self.user_id, response)
-            
-            await interaction.response.send_message("✅ Ваш ответ сохранен!" + (" (с выбранным типом закрепления)" if pin_type else ""), ephemeral=True)
-            
-        except Exception as e:
-            print(f"Ошибка в PollResponseModal: {e}")
             try:
-                await interaction.response.send_message("❌ Произошла ошибка при сохранении ответа. Попробуйте еще раз.", ephemeral=True)
+                other_user = await bot.fetch_user(int(other_user_id))
+                username = other_user.name if other_user else "Неизвестно"
             except:
-                pass
-
-class VoteView(View):
-    def __init__(self, question, options, timeout_minutes, ctx, creator_id, original_ctx, is_pin_enabled):
-        super().__init__(timeout=None)
-        self.question = question
-        self.options = options
-        self.votes = {option: [] for option in options}
-        self.timeout_minutes = timeout_minutes
-        self.is_active = True
-        self.is_aborted = False
-        self.message = None
-        self.ctx = ctx
-        self.creator_id = creator_id
-        self.original_ctx = original_ctx
-        self.is_pin_enabled = is_pin_enabled
-        
-        for option in options:
-            button = Button(
-                label=option[:80],
-                style=discord.ButtonStyle.primary,
-                custom_id=f"vote_{option[:50]}"
-            )
-            button.callback = self.create_vote_callback(option)
-            self.add_item(button)
-        
-        finish_button = Button(
-            label='⏹️ Завершить досрочно',
-            style=discord.ButtonStyle.danger,
-            custom_id='finish_vote_early'
-        )
-        finish_button.callback = self.create_finish_callback()
-        self.add_item(finish_button)
-        
-        abort_button = Button(
-            label='🚫 Прервать голосование',
-            style=discord.ButtonStyle.danger,
-            custom_id='abort_vote'
-        )
-        abort_button.callback = self.create_abort_callback()
-        self.add_item(abort_button)
-    
-    async def send_reminder(self, reminder_hours, stage):
-        """Отправляет напоминание через указанное количество часов"""
-        try:
-            await asyncio.sleep(reminder_hours * 3600)
+                username = "Неизвестно"
             
-            if self.is_active and not self.is_aborted:
-                try:
-                    embed = discord.Embed(
-                        title="⏰ Напоминание!",
-                        description=f"**{stage.capitalize()}** еще активно!\n"
-                                   f"Вопрос: **{self.question}**\n"
-                                   f"Осталось времени: **{self.timeout_minutes}** минут\n\n"
-                                   f"Не забудьте проголосовать!",
-                        color=discord.Color.gold()
-                    )
-                    await self.ctx.followup.send(embed=embed)
-                except (discord.NotFound, discord.Forbidden):
-                    # Канал или сообщение удалены
-                    pass
-        except asyncio.CancelledError:
-            # Задача отменена - просто выходим
-            pass
-    
-    def create_abort_callback(self):
-        async def callback(interaction: discord.Interaction):
-            is_creator = interaction.user.id == self.creator_id
-            is_admin = interaction.user.guild_permissions.administrator
+            data = load_applications_data()
+            app_data = data["applications"].get(chat.get("application_id", ""), {})
+            app_content = app_data.get("content", {})
             
-            if not (is_creator or is_admin):
-                await interaction.response.send_message("❌ Только создатель голосования или администратор может прервать голосование!", ephemeral=True)
-                return
+            channel_id = chat.get("channel_id")
+            channel_info = ""
+            if channel_id:
+                channel = bot.get_channel(int(channel_id))
+                if channel:
+                    channel_info = f"**Канал:** {channel.mention}"
+                else:
+                    channel_info = "**Канал:** удален"
             
-            self.is_aborted = True
-            self.is_active = False
-            
-            embed = discord.Embed(
-                title="⛔ Голосование прервано",
-                description=f"**Вопрос:** {self.question}\n\nГолосование было прервано создателем!",
-                color=discord.Color.red()
-            )
-            await self.message.edit(embed=embed, view=None)
-            
-            await interaction.response.send_message("✅ Голосование успешно прервано!", ephemeral=True)
-        return callback
-    
-    def create_finish_callback(self):
-        async def callback(interaction: discord.Interaction):
-            is_creator = interaction.user.id == self.creator_id
-            is_admin = interaction.user.guild_permissions.administrator
-            
-            if not (is_creator or is_admin):
-                await interaction.response.send_message("❌ Только создатель голосования или администратор может завершить его досрочно!", ephemeral=True)
-                return
-            
-            await interaction.response.defer()
-            await self.force_finish()
-            await interaction.followup.send("✅ Голосование досрочно завершено!", ephemeral=True)
-        return callback
-    
-    def create_vote_callback(self, option):
-        async def callback(interaction: discord.Interaction):
-            if not self.is_active:
-                await interaction.response.send_message("❌ Голосование завершено!", ephemeral=True)
-                return
-            
-            if self.is_aborted:
-                await interaction.response.send_message("❌ Голосование было прервано!", ephemeral=True)
-                return
-            
-            for opt, voters in self.votes.items():
-                if interaction.user.id in voters:
-                    voters.remove(interaction.user.id)
-            
-            if interaction.user.id not in self.votes[option]:
-                self.votes[option].append(interaction.user.id)
-            
-            await self.update_message()
-            await interaction.response.send_message(f"✅ Вы проголосовали за: **{option}**", ephemeral=True)
-        return callback
-    
-    async def update_message(self):
-        if self.message and not self.is_aborted:
-            try:
-                embed = discord.Embed(
-                    title=f"🗳️ Голосование: {self.question}",
-                    color=discord.Color.purple()
-                )
-                
-                total_votes = sum(len(voters) for voters in self.votes.values())
-                
-                for option, voters in self.votes.items():
-                    count = len(voters)
-                    percentage = (count / total_votes * 100) if total_votes > 0 else 0
-                    bar = "█" * int(percentage / 5) + "░" * (20 - int(percentage / 5))
-                    embed.add_field(
-                        name=option,
-                        value=f"`{bar}` {count} голосов ({percentage:.1f}%)",
-                        inline=False
-                    )
-                
-                embed.set_footer(text=f"Всего голосов: {total_votes} | Осталось {self.timeout_minutes} минут")
-                await self.message.edit(embed=embed, view=self)
-            except (discord.NotFound, discord.Forbidden):
-                pass
-    
-    async def force_finish(self):
-        self.is_active = False
-        await self.finish_vote()
-    
-    async def finish_vote(self):
-        self.is_active = False
-        
-        if self.is_aborted:
-            return None
-        
-        embed = discord.Embed(
-            title="🏆 Результаты голосования",
-            description=f"**Вопрос:** {self.question}",
-            color=discord.Color.gold()
-        )
-        
-        total_votes = sum(len(voters) for voters in self.votes.values())
-        
-        if total_votes == 0:
-            embed.description += "\n\n❌ Никто не проголосовал!"
-            await self.message.edit(embed=embed, view=None)
-            return embed
-        
-        sorted_options = sorted(self.votes.items(), key=lambda x: len(x[1]), reverse=True)
-        
-        for option, voters in sorted_options:
-            count = len(voters)
-            percentage = (count / total_votes * 100) if total_votes > 0 else 0
-            bar = "█" * int(percentage / 5) + "░" * (20 - int(percentage / 5))
-            
-            voters_mentions = ", ".join([f"<@{uid}>" for uid in voters[:10]])
-            if len(voters) > 10:
-                voters_mentions += f" и еще {len(voters) - 10}"
+            is_anonymous = chat.get("is_anonymous", False)
             
             embed.add_field(
-                name=f"🥇 {option}" if option == sorted_options[0][0] else option,
-                value=f"`{bar}` {count} голосов ({percentage:.1f}%)\n{voters_mentions}",
+                name=f"📌 Диалог #{i}",
+                value=f"**Собеседник:** {username}\n"
+                      f"**Заявка:** {app_content.get('Имя', 'Неизвестно')}\n"
+                      f"**Режим:** {'Анонимный' if is_anonymous else 'Открытый'}\n"
+                      f"**Начат:** {chat.get('started_at', '')[:16]}\n"
+                      f"{channel_info}\n"
+                      f"**Сообщений:** {len(chat.get('messages', []))}",
                 inline=False
             )
         
-        embed.set_footer(text=f"Всего проголосовало: {total_votes} участников")
-        await self.message.edit(embed=embed, view=None)
-        return embed
+        await ctx.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"❌ Ошибка в list_chats: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
 
-# ==================== КОМАНДА ДЛЯ ОПРОСОВ ====================
-
-@bot.command(name='create_poll')
-@commands.has_permissions(administrator=True)
-async def create_poll(ctx):
-    """Создает опрос с последующим голосованием"""
-    global active_poll
-    
-    if active_poll:
-        await ctx.send("❌ В данный момент уже идет опрос или голосование! Дождитесь его завершения.", ephemeral=True)
-        return
-    
-    modal = CreatePollModal(ctx.author.id, ctx)
-    
-    view = View(timeout=120)
-    
-    async def button_callback(interaction: discord.Interaction):
-        global active_poll
-        
-        if interaction.user.id != ctx.author.id:
-            await interaction.response.send_message("❌ Вы не вызывали эту команду!", ephemeral=True)
+@bot.command(name='clear_chat')
+async def clear_chat(ctx, application_id: str = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
             return
         
-        if active_poll:
-            await interaction.response.send_message("❌ В данный момент уже идет опрос или голосование! Дождитесь его завершения.", ephemeral=True)
+        if not application_id:
+            await ctx.send("❌ Укажите ID заявки! Используйте `!list_chats` для просмотра.")
             return
         
-        modal.original_message = interaction.message
-        modal.command_message = ctx.message
-        await interaction.response.send_modal(modal)
-    
-    button = Button(label="📝 Создать опрос", style=discord.ButtonStyle.success)
-    button.callback = button_callback
-    view.add_item(button)
-    
-    await ctx.send("Нажмите кнопку для создания опроса:", view=view, ephemeral=True)
+        active_chats = ChatManager.get_active_chat_for_application(application_id)
+        if not active_chats:
+            await ctx.send("❌ Активный диалог для этой заявки не найден!")
+            return
+        
+        chat_id = None
+        chat = None
+        for cid, c in active_chats:
+            if ChatManager.is_user_in_chat(ctx.author.id, cid):
+                chat_id = cid
+                chat = c
+                break
+        
+        if not chat:
+            await ctx.send("❌ Вы не участвуете в этом диалоге!")
+            return
+        
+        channel_id = chat.get("channel_id")
+        if channel_id:
+            channel = bot.get_channel(int(channel_id))
+            if channel:
+                await TemporaryChannelManager.delete_channel(channel)
+        
+        if ChatManager.end_chat(chat_id):
+            other_user_id = ChatManager.get_other_user(chat_id, ctx.author.id)
+            if other_user_id:
+                try:
+                    other_user = await bot.fetch_user(int(other_user_id))
+                    if other_user:
+                        embed = discord.Embed(
+                            title="🛑 Диалог завершен",
+                            description="Ваш собеседник завершил диалог.",
+                            color=discord.Color.red()
+                        )
+                        await other_user.send(embed=embed)
+                except:
+                    pass
+            
+            await ctx.send("✅ Диалог успешно завершен!", ephemeral=True)
+        else:
+            await ctx.send("❌ Ошибка при завершении диалога!", ephemeral=True)
+    except Exception as e:
+        print(f"❌ Ошибка в clear_chat: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
 
-@bot.command(name='poll_help')
-@commands.has_permissions(administrator=True)
-async def poll_help(ctx):
-    """Помощь по командам опросов"""
-    embed = discord.Embed(
-        title="📋 Помощь по опросам",
-        description="Команды для создания опросов и голосований",
-        color=discord.Color.blue()
-    )
-    embed.add_field(
-        name="!create_poll",
-        value="Открывает окно для создания опроса с 5 шагами:\n"
-              "1. Название опроса\n"
-              "2. Время/Напоминание для опроса (минуты / часы). Пример: 60 / 1\n"
-              "3. Название голосования\n"
-              "4. Время/Напоминание для голосования (минуты / часы). Пример: 60 / 1\n"
-              "5. Включить варианты ответов (да/нет)\n\n"
-              "⚠️ Во время активного опроса команда недоступна!",
-        inline=False
-    )
-    embed.add_field(
-        name="!poll_help",
-        value="Показывает это сообщение",
-        inline=False
-    )
-    embed.add_field(
-        name="🔒 Особенности",
-        value="• Кнопку 'Создать опрос' может нажать только создатель\n"
-              "• Кнопку 'Завершить досрочно' могут использовать создатель и администраторы\n"
-              "• Кнопку 'Прервать' могут использовать создатель и администраторы\n"
-              "• Во время активного опроса/голосования создание нового невозможно\n"
-              "• Проверка на дубликаты ответов (с учетом регистра и пробелов)\n"
-              "• 🗑️ Сообщение с кнопкой удаляется после начала создания\n"
-              "• 🗑️ Сообщение с командой !create_poll удаляется после начала создания\n"
-              "• 📌 Кнопки 'Постоянная' и 'Временная' одного цвета\n"
-              "• ✏️ После ответа кнопка меняется на 'Редактировать'\n"
-              "• ⏰ Напоминания отправляются через указанное время\n"
-              "• ⚠️ Напоминание должно быть меньше времени опроса/голосования",
-        inline=False
-    )
-    await ctx.send(embed=embed, ephemeral=True)
+@bot.command(name='block')
+async def block_user_cmd(ctx, user_id: str = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not user_id:
+            await ctx.send("❌ Укажите ID пользователя для блокировки!")
+            return
+        
+        user_to_block = int(user_id)
+        
+        if str(ctx.author.id) == user_id:
+            await ctx.send("❌ Вы не можете заблокировать себя!")
+            return
+        
+        if block_user(ctx.author.id, user_to_block):
+            await ctx.send(f"✅ Пользователь <@{user_id}> заблокирован!", ephemeral=True)
+            
+            user_chats = ChatManager.get_active_chats_for_user(ctx.author.id)
+            for chat_id, chat in user_chats:
+                other_user = ChatManager.get_other_user(chat_id, ctx.author.id)
+                if other_user and str(other_user) == user_id:
+                    ChatManager.end_chat(chat_id)
+                    
+                    channel_id = chat.get("channel_id")
+                    if channel_id:
+                        channel = bot.get_channel(int(channel_id))
+                        if channel:
+                            await TemporaryChannelManager.delete_channel(channel)
+                    
+                    try:
+                        other_user_obj = await bot.fetch_user(int(other_user))
+                        if other_user_obj:
+                            embed = discord.Embed(
+                                title="🚫 Вы были заблокированы",
+                                description="Пользователь заблокировал вас. Диалог завершен.",
+                                color=discord.Color.red()
+                            )
+                            await other_user_obj.send(embed=embed)
+                    except:
+                        pass
+        else:
+            await ctx.send("❌ Пользователь уже заблокирован!", ephemeral=True)
+            
+    except ValueError:
+        await ctx.send("❌ Укажите корректный ID пользователя!")
+    except Exception as e:
+        print(f"❌ Ошибка в block_user_cmd: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
 
-# ==================== СОБЫТИЯ БОТА ====================
+@bot.command(name='unblock')
+async def unblock_user_cmd(ctx, user_id: str = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not user_id:
+            await ctx.send("❌ Укажите ID пользователя для разблокировки!")
+            return
+        
+        user_to_unblock = int(user_id)
+        
+        if unblock_user(ctx.author.id, user_to_unblock):
+            await ctx.send(f"✅ Пользователь <@{user_id}> разблокирован!", ephemeral=True)
+        else:
+            await ctx.send("❌ Пользователь не был заблокирован!", ephemeral=True)
+            
+    except ValueError:
+        await ctx.send("❌ Укажите корректный ID пользователя!")
+    except Exception as e:
+        print(f"❌ Ошибка в unblock_user_cmd: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='blocked')
+async def list_blocked(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        data = load_blocked_users()
+        blocked = data["blocked"].get(str(ctx.author.id), [])
+        
+        if not blocked:
+            await ctx.send("📭 У вас нет заблокированных пользователей.", ephemeral=True)
+            return
+        
+        embed = discord.Embed(
+            title="🚫 Заблокированные пользователи",
+            description=f"Всего: {len(blocked)}",
+            color=discord.Color.red()
+        )
+        
+        blocked_list = []
+        for uid in blocked:
+            try:
+                user = await bot.fetch_user(int(uid))
+                blocked_list.append(f"• {user.name} (`{uid}`)")
+            except:
+                blocked_list.append(f"• Неизвестный пользователь (`{uid}`)")
+        
+        embed.add_field(name="📋 Список", value="\n".join(blocked_list) if blocked_list else "Нет данных", inline=False)
+        
+        await ctx.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print(f"❌ Ошибка в list_blocked: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='set_welcome')
+async def set_welcome(ctx, style_name: str = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ У вас нет прав администратора!")
+            return
+        
+        if not style_name:
+            styles = ", ".join(WELCOME_STYLES.keys())
+            await ctx.send(f"📋 Доступные стили: {styles}\nИспользуйте `!set_welcome <название_стиля>`")
+            return
+        
+        if set_welcome_style(style_name):
+            await ctx.send(f"✅ Стиль приветствия изменен на: **{style_name}**")
+            
+            welcome_channel = discord.utils.get(ctx.guild.channels, name=WELCOME_CHANNEL_NAME)
+            if welcome_channel:
+                await create_welcome_message(welcome_channel, ctx.guild)
+        else:
+            styles = ", ".join(WELCOME_STYLES.keys())
+            await ctx.send(f"❌ Стиль '{style_name}' не найден! Доступные: {styles}")
+    except Exception as e:
+        print(f"❌ Ошибка в set_welcome: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='reset_welcome')
+async def reset_welcome(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ У вас нет прав администратора!")
+            return
+        
+        welcome_channel = discord.utils.get(ctx.guild.channels, name=WELCOME_CHANNEL_NAME)
+        if welcome_channel:
+            await create_welcome_message(welcome_channel, ctx.guild)
+            await ctx.send("✅ Приветственное сообщение пересоздано!")
+        else:
+            await ctx.send(f"❌ Канал '{WELCOME_CHANNEL_NAME}' не найден!")
+    except Exception as e:
+        print(f"❌ Ошибка в reset_welcome: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='moderate')
+async def moderate_channel(ctx, channel: discord.TextChannel = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ У вас нет прав администратора!")
+            return
+        
+        if not channel:
+            channel = discord.utils.get(ctx.guild.channels, name=DATING_CHANNEL_NAME)
+            if not channel:
+                await ctx.send(f"❌ Канал '{DATING_CHANNEL_NAME}' не найден!")
+                return
+        
+        await ctx.send(f"🔍 Начинаю проверку канала {channel.mention}...")
+        await moderate_existing_messages(channel)
+    except Exception as e:
+        print(f"❌ Ошибка в moderate_channel: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='stats')
+async def show_stats(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        data = load_applications_data()
+        chat_data = load_active_chats()
+        blocked_data = load_blocked_users()
+        temp_data = load_temp_channels()
+        
+        total_applications = len(data["applications"])
+        active_chats = sum(1 for chat in chat_data["chats"].values() if chat.get("is_active", False))
+        total_chats = len(chat_data["chats"])
+        total_blocked = sum(len(blocked) for blocked in blocked_data["blocked"].values())
+        active_channels = sum(1 for ch in temp_data["channels"].values() if ch.get("is_active", True))
+        
+        embed = discord.Embed(
+            title="📊 Статистика бота",
+            description="Текущая статистика работы бота",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(name="📝 Всего заявок", value=str(total_applications), inline=True)
+        embed.add_field(name="💬 Активных диалогов", value=str(active_chats), inline=True)
+        embed.add_field(name="📋 Всего диалогов", value=str(total_chats), inline=True)
+        embed.add_field(name="🚫 Всего блокировок", value=str(total_blocked), inline=True)
+        embed.add_field(name="🔒 Активных каналов", value=str(active_channels), inline=True)
+        embed.add_field(name="🤖 Пользователей", value=str(len(bot.users)), inline=True)
+        embed.add_field(name="🔄 Серверов", value=str(len(bot.guilds)), inline=True)
+        
+        embed.set_footer(text=f"Время работы: {discord.utils.utcnow() - bot.user.created_at}")
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        print(f"❌ Ошибка в show_stats: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='create_chat')
+async def create_chat_cmd(ctx, user_id: str = None):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not user_id:
+            await ctx.send("❌ Укажите ID пользователя!")
+            return
+        
+        target_user = await bot.fetch_user(int(user_id))
+        if not target_user:
+            await ctx.send("❌ Пользователь не найден!")
+            return
+        
+        if str(ctx.author.id) == user_id:
+            await ctx.send("❌ Вы не можете создать чат с самим собой!")
+            return
+        
+        if is_user_blocked(ctx.author.id, user_id):
+            await ctx.send("❌ Вы заблокировали этого пользователя!")
+            return
+        
+        if is_user_blocked(user_id, ctx.author.id):
+            await ctx.send("❌ Этот пользователь заблокировал вас!")
+            return
+        
+        application_id = f"manual_{int(datetime.now().timestamp())}"
+        
+        # Сразу показываем выбор режима
+        embed = discord.Embed(
+            title="🔒 Выберите режим чата",
+            description="Как вы хотите общаться?",
+            color=discord.Color.blue()
+        )
+        
+        view = AnonymousStartView(application_id, ctx.author.id, user_id)
+        await ctx.send(embed=embed, view=view)
+            
+    except ValueError:
+        await ctx.send("❌ Укажите корректный ID пользователя!")
+    except Exception as e:
+        print(f"❌ Ошибка в create_chat_cmd: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+@bot.command(name='clean_apps')
+async def clean_applications(ctx):
+    try:
+        if not ctx.guild:
+            await ctx.send("❌ Эта команда доступна только на сервере!")
+            return
+        
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("❌ У вас нет прав администратора!")
+            return
+        
+        data = load_applications_data()
+        deleted_count = 0
+        
+        for app_id, app_data in list(data["applications"].items()):
+            active_chats = ChatManager.get_active_chat_for_application(app_id)
+            if not active_chats:
+                message_id = app_data.get("message_id")
+                if message_id:
+                    dating_channel = discord.utils.get(ctx.guild.channels, name=DATING_CHANNEL_NAME)
+                    if dating_channel:
+                        try:
+                            message = await dating_channel.fetch_message(int(message_id))
+                            if message:
+                                await message.delete()
+                        except:
+                            pass
+                
+                del data["applications"][app_id]
+                deleted_count += 1
+        
+        save_applications_data(data)
+        await ctx.send(f"✅ Удалено неактивных заявок: {deleted_count}")
+    except Exception as e:
+        print(f"❌ Ошибка в clean_applications: {e}")
+        await ctx.send("❌ Произошла ошибка.", ephemeral=True)
+
+# ==================== ЗАПУСК БОТА ====================
 
 @bot.event
 async def on_ready():
-    print(f'{EMOJIS["sparkles"]} Бот {bot.user} успешно запущен!')
-    print(f'Подключен к {len(bot.guilds)} серверам')
-    
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name="За новыми участниками 👀"
-        ),
-        status=discord.Status.online
-    )
-    
-    # ========== НАХОДИМ КАНАЛЫ ПО НАЗВАНИЮ ==========
-    welcome_ch = None
-    role_ch = None
-    dating_ch = None
-    log_ch = bot.get_channel(LOG_CHANNEL_ID)
-    
-    for guild in bot.guilds:
-        for channel in guild.channels:
-            if channel.name == WELCOME_CHANNEL_NAME:
-                welcome_ch = channel
-                # Сохраняем ID для использования в других функциях
-                global WELCOME_CHANNEL_ID
-                WELCOME_CHANNEL_ID = channel.id
-                print(f"✅ Найден приветственный канал: #{channel.name} (ID: {channel.id})")
-            if channel.name == ROLE_CHANGE_CHANNEL_NAME:
-                role_ch = channel
-                global ROLE_CHANGE_CHANNEL_ID
-                ROLE_CHANGE_CHANNEL_ID = channel.id
-                print(f"✅ Найден канал смены ролей: #{channel.name} (ID: {channel.id})")
-            if channel.name == DATING_CHANNEL_NAME:
-                dating_ch = channel
-                global DATING_CHANNEL_ID
-                DATING_CHANNEL_ID = channel.id
-                print(f"✅ Найден канал знакомств: #{channel.name} (ID: {channel.id})")
-    
-    if welcome_ch:
-        print(f"✅ Приветственный канал: #{welcome_ch.name}")
-    else:
-        print(f"❌ Приветственный канал НЕ НАЙДЕН! Проверь название: {WELCOME_CHANNEL_NAME}")
-    
-    if role_ch:
-        print(f"✅ Канал смены ролей: #{role_ch.name}")
-    else:
-        print(f"❌ Канал смены ролей НЕ НАЙДЕН! Проверь название: {ROLE_CHANGE_CHANNEL_NAME}")
-    
-    if dating_ch:
-        print(f"✅ Канал знакомств: #{dating_ch.name}")
-    else:
-        print(f"❌ Канал знакомств НЕ НАЙДЕН! Проверь название: {DATING_CHANNEL_NAME}")
-    
-    if log_ch:
-        print(f"✅ Лог-канал: #{log_ch.name}")
-    else:
-        print(f"❌ Лог-канал НЕ НАЙДЕН!")
-    
-    # Создаем роли для всех серверов
-    for guild in bot.guilds:
-        await find_or_create_role(guild, NEWBIE_ROLE_NAME, discord.Color.light_gray())
-        await assign_main_role_for_guild(guild)
-    
-    # ========== НАСТРАИВАЕМ ПРИВЕТСТВЕННЫЙ КАНАЛ ==========
-    if welcome_ch:
-        try:
-            # Удаляем старые сообщения бота
-            async for message in welcome_ch.history(limit=50):
-                if message.author == bot.user:
-                    try:
-                        await message.delete()
-                    except:
-                        pass
-                    await asyncio.sleep(0.5)
-        except:
-            pass
+    try:
+        print(f'✅ Бот запущен как {bot.user}')
+        print(f'📊 На серверах: {len(bot.guilds)}')
+        print(f'👥 Пользователей: {len(bot.users)}')
         
-        # Отправляем новое приветственное сообщение
-        embed = discord.Embed(
-            title=f"{EMOJIS['welcome']} Добро пожаловать на сервер!",
-            description=f"{EMOJIS['sparkles']} Чтобы получить доступ ко всем каналам,\n"
-                       f"нажмите на кнопку ниже для регистрации!\n\n"
-                       f"{EMOJIS['star']} Это займёт всего пару минут.\n\n"
-                       f"⚠️ **У вас есть роль {NEWBIE_ROLE_NAME}**\n"
-                       f"После регистрации она будет автоматически удалена.\n\n"
-                       f"👨 **Мужчина** → роль **Воин**\n"
-                       f"👩 **Женщина** → роль **Цветок**",
-            color=discord.Color.blue()
+        for guild in bot.guilds:
+            await assign_main_role_for_guild(guild)
+            await find_or_create_role(guild, NEWBIE_ROLE_NAME, discord.Color.light_gray())
+            
+            welcome_channel = discord.utils.get(guild.channels, name=WELCOME_CHANNEL_NAME)
+            if not welcome_channel:
+                try:
+                    overwrites = {
+                        guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+                        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_messages=True)
+                    }
+                    welcome_channel = await guild.create_text_channel(
+                        WELCOME_CHANNEL_NAME,
+                        overwrites=overwrites,
+                        topic="Канал приветствия и регистрации"
+                    )
+                    print(f"✅ Создан канал: {welcome_channel.name}")
+                except Exception as e:
+                    print(f"❌ Ошибка создания канала: {e}")
+            
+            if welcome_channel:
+                await create_welcome_message(welcome_channel, guild)
+            
+            category_name = "💬 Приватные чаты"
+            if not discord.utils.get(guild.categories, name=category_name):
+                try:
+                    await guild.create_category(category_name)
+                    print(f"✅ Создана категория: {category_name}")
+                except Exception as e:
+                    print(f"❌ Ошибка создания категории: {e}")
+            
+            # Создаем архивный канал
+            archive_channel = discord.utils.get(guild.channels, name=ARCHIVE_CHANNEL_NAME)
+            if not archive_channel:
+                try:
+                    overwrites = {
+                        guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+                        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+                    }
+                    archive_channel = await guild.create_text_channel(
+                        ARCHIVE_CHANNEL_NAME,
+                        overwrites=overwrites,
+                        topic="Архив завершенных чатов"
+                    )
+                    print(f"✅ Создан архивный канал: {archive_channel.name}")
+                except Exception as e:
+                    print(f"❌ Ошибка создания архивного канала: {e}")
+        
+        for guild in bot.guilds:
+            dating_channel = discord.utils.get(guild.channels, name=DATING_CHANNEL_NAME)
+            if dating_channel:
+                await moderate_existing_messages(dating_channel)
+        
+        await bot.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.playing,
+                name="Небесные Врата | !help"
+            )
         )
-        
-        # Получаем иконку сервера
-        guild = bot.guilds[0] if bot.guilds else None
-        if guild and guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
-        
-        embed.set_footer(text="Регистрация через личные сообщения")
-        
-        view = ApplyView()
-        await welcome_ch.send(embed=embed, view=view)
-    
-    # ========== НАСТРАИВАЕМ КАНАЛ СМЕНЫ РОЛЕЙ ==========
-    if role_ch:
-        try:
-            # Удаляем старые сообщения бота
-            async for message in role_ch.history(limit=50):
-                if message.author == bot.user:
-                    try:
-                        await message.delete()
-                    except:
-                        pass
-                    await asyncio.sleep(0.5)
-        except:
-            pass
-        
-        # Отправляем новое сообщение для смены ролей
-        embed = discord.Embed(
-            title="🔄 Смена ролей",
-            description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
-                       f"🎮 **Сменить игры** — заменить игровые роли\n"
-                       f"👤 **Указать пол** — только если ещё нет\n"
-                       f"🎂 **Указать возраст** — только если ещё нет\n\n"
-                       f"👨 **Мужчина** → роль **Воин**\n"
-                       f"👩 **Женщина** → роль **Цветок**",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text="Нажмите на кнопку ниже")
-        
-        view = ChangeGamesView()
-        await role_ch.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"❌ Ошибка в on_ready: {e}")
 
 @bot.event
 async def on_member_join(member):
-    """При входе участника выдаём роль новичка"""
-    if len(member.roles) > 1:
-        print(f"ℹ️ {member.name} уже имеет роли, пропускаем")
-        return
-    
-    await assign_newbie_role(member)
-    print(f"📥 {member.name} получил роль {NEWBIE_ROLE_NAME}")
-
-# ==================== КОМАНДЫ ====================
-
-@bot.command(name='setup')
-@commands.has_permissions(administrator=True)
-async def setup_welcome(ctx):
-    """Пересоздает приветственное сообщение"""
-    # Ищем канал по названию
-    channel = None
-    for ch in ctx.guild.channels:
-        if ch.name == WELCOME_CHANNEL_NAME:
-            channel = ch
-            break
-    
-    if not channel:
-        await ctx.send(f"❌ Канал '{WELCOME_CHANNEL_NAME}' не найден!")
-        return
-    
     try:
-        # Удаляем старые сообщения бота
-        async for message in channel.history(limit=50):
-            if message.author == bot.user:
-                try:
-                    await message.delete()
-                except:
-                    pass
-            await asyncio.sleep(0.5)
-    except:
-        pass
-    
-    # Отправляем новое сообщение
-    embed = discord.Embed(
-        title=f"{EMOJIS['welcome']} Добро пожаловать на сервер **{ctx.guild.name}**!",
-        description=f"{EMOJIS['sparkles']} Чтобы получить доступ ко всем каналам,\n"
-                   f"нажмите на кнопку ниже для регистрации!\n\n"
-                   f"{EMOJIS['star']} Это займёт всего пару минут.\n\n"
-                   f"⚠️ **У вас есть роль {NEWBIE_ROLE_NAME}**\n"
-                   f"После регистрации она будет автоматически удалена.\n\n"
-                   f"👨 **Мужчина** → роль **Воин**\n"
-                   f"👩 **Женщина** → роль **Цветок**",
-        color=discord.Color.blue()
-    )
-    if ctx.guild.icon:
-        embed.set_thumbnail(url=ctx.guild.icon.url)
-    embed.set_footer(text="Регистрация через личные сообщения")
-    
-    view = ApplyView()
-    await channel.send(embed=embed, view=view)
-    await ctx.send(f"{EMOJIS['complete']} Приветственное сообщение обновлено!")
-
-@bot.command(name='setup_roles')
-@commands.has_permissions(administrator=True)
-async def setup_role_channel(ctx):
-    """Пересоздает сообщение для смены ролей"""
-    # Ищем канал по названию
-    channel = None
-    for ch in ctx.guild.channels:
-        if ch.name == ROLE_CHANGE_CHANNEL_NAME:
-            channel = ch
-            break
-    
-    if not channel:
-        await ctx.send(f"❌ Канал '{ROLE_CHANGE_CHANNEL_NAME}' не найден!")
-        return
-    
-    try:
-        # Удаляем старые сообщения бота
-        async for message in channel.history(limit=50):
-            if message.author == bot.user:
-                try:
-                    await message.delete()
-                except:
-                    pass
-            await asyncio.sleep(0.5)
-    except:
-        pass
-    
-    # Отправляем новое сообщение
-    embed = discord.Embed(
-        title="🔄 Смена ролей",
-        description=f"{EMOJIS['sparkles']} Здесь вы можете изменить свои роли\n\n"
-                   f"🎮 **Сменить игры** — заменить игровые роли\n"
-                   f"👤 **Указать пол** — только если ещё нет\n"
-                   f"🎂 **Указать возраст** — только если ещё нет\n\n"
-                   f"👨 **Мужчина** → роль **Воин**\n"
-                   f"👩 **Женщина** → роль **Цветок**",
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text="Нажмите на кнопку ниже")
-    
-    view = ChangeGamesView()
-    await channel.send(embed=embed, view=view)
-    await ctx.send(f"{EMOJIS['complete']} Сообщение для смены ролей обновлено!")
-
-@bot.command(name='test')
-async def test_registration(ctx):
-    """Тестовая регистрация"""
-    try:
-        member = await ctx.guild.fetch_member(ctx.author.id)
-        user_data = {'member': member, 'guild': ctx.guild, 'from_registration': True}
-        
-        welcome_embed = discord.Embed(
-            title=f"{EMOJIS['welcome']} Тестовая регистрация",
-            description=f"{EMOJIS['sparkles']} Давай протестируем процесс регистрации!",
-            color=discord.Color.blue()
-        )
-        
-        gender_embed = discord.Embed(
-            title=f"{EMOJIS['gender']} Вопрос 1 из 3: Выберите свой пол",
-            description=f"{EMOJIS['star']} Кто вы?\n\n"
-                       f"👨 **Мужчина** (роль **Воин**)\n"
-                       f"👩 **Женщина** (роль **Цветок**)",
-            color=discord.Color.blue()
-        )
-        gender_embed.set_footer(text="Нажмите на одну из кнопок ниже")
-        
-        view = GenderView(user_data, from_registration=True)
-        await ctx.author.send(embed=welcome_embed)
-        await ctx.author.send(embed=gender_embed, view=view)
-        await ctx.send(f"{EMOJIS['rocket']} Проверь личные сообщения!")
-        
-    except discord.Forbidden:
-        await ctx.send("❌ Открой личные сообщения в настройках Discord!")
+        await assign_newbie_role(member)
+        print(f"👋 Новый участник: {member.name} на сервере {member.guild.name}")
     except Exception as e:
-        await ctx.send(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка в on_member_join: {e}")
 
-@bot.command(name='clear_all')
-@commands.has_permissions(administrator=True)
-async def clear_all(ctx):
-    """Удаляет ВСЕ сообщения бота в канале"""
-    deleted = 0
-    async for message in ctx.channel.history(limit=1000):
-        if message.author == bot.user:
-            try:
-                await message.delete()
-                deleted += 1
-                await asyncio.sleep(0.5)
-            except:
-                pass
-    await ctx.send(f"✅ Удалено {deleted} сообщений бота!", delete_after=5)
+@bot.event
+async def on_member_remove(member):
+    try:
+        print(f"👋 Пользователь покинул сервер: {member.name}")
+    except Exception as e:
+        print(f"❌ Ошибка в on_member_remove: {e}")
 
 # ==================== ЗАПУСК ====================
 
 if __name__ == "__main__":
     TOKEN = os.environ.get('DISCORD_TOKEN')
+    
     if not TOKEN:
-        print("❌ Токен не найден! Создайте файл .env с DISCORD_TOKEN=ваш_токен")
+        print("❌ ОШИБКА: Не найден DISCORD_TOKEN в переменных окружения!")
+        print("📝 Создайте файл .env и добавьте туда:")
+        print("DISCORD_TOKEN=ваш_токен")
         sys.exit(1)
-    bot.run(TOKEN)
+    
+    try:
+        print("🚀 Запуск бота...")
+        bot.run(TOKEN)
+    except Exception as e:
+        print(f"❌ Критическая ошибка при запуске бота: {e}")
+        sys.exit(1)
